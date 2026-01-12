@@ -9,6 +9,9 @@ class MSCloudLoginConnectionProfile
     [AdminAPI]
     $AdminAPI
 
+    [Autopatch]
+    $Autopatch
+
     [Azure]
     $Azure
 
@@ -63,6 +66,7 @@ class MSCloudLoginConnectionProfile
 
         # Workloads Object Creation
         $this.AdminAPI                 = New-Object AdminAPI
+        $this.Autopatch                = New-Object Autopatch
         $this.Azure                    = New-Object Azure
         $this.AzureDevOPS              = New-Object AzureDevOPS
         $this.DefenderForEndpoint      = New-Object DefenderForEndpoint
@@ -317,6 +321,58 @@ class AdminAPI:Workload
 
         $Script:MSCloudLoginConnectionProfile.AdminAPI = $this
         Connect-MSCloudLoginAdminAPI
+    }
+}
+
+class Autopatch:Workload
+{
+    [string]
+    $AuthorizationUrl
+
+    [string]
+    $Scope
+
+    [string]
+    $AccessToken
+
+    [string]
+    $Resource = "c9d36ed4-91b3-4c87-b8d7-68d92826c96c"
+
+    Autopatch()
+    {
+        $this.ApplicationId = "1950a258-227b-4e31-a9cf-717495945fc2"
+    }
+
+    [void] Connect()
+    {
+        ([Workload]$this).Setup()
+
+        switch ($this.EnvironmentName)
+        {
+            'AzureDOD'
+            {
+                $this.Scope            = "$($this.Resource)/.default"
+                $this.AuthorizationUrl = "https://login.microsoftonline.us"
+            }
+            'AzureUSGovernment'
+            {
+                $this.Scope            = "$($this.Resource)/.default"
+                $this.AuthorizationUrl = "https://login.microsoftonline.us"
+            }
+            'Custom'
+            {
+                $this.Scope            = $Global:CustomAdminApiScope
+                $this.AuthorizationUrl = $Global:CustomAdminApiAuthorizationUrl
+            }
+            default
+            {
+                $this.Scope            = "$($this.Resource)/.default"
+                $this.AuthorizationUrl = "https://login.microsoftonline.com"
+            }
+        }
+
+        $Script:MSCloudLoginConnectionProfile.Autopatch = $this
+        Connect-MSCloudLoginAutopatch
     }
 }
 
