@@ -36,6 +36,9 @@ class MSCloudLoginConnectionProfile
     [MicrosoftGraph]
     $MicrosoftGraph
 
+    [MicrosoftGraphDll]
+    $MicrosoftGraphDll
+
     [PnP]
     $PnP
 
@@ -72,6 +75,7 @@ class MSCloudLoginConnectionProfile
         $this.Licensing                = New-Object Licensing
         $this.O365Portal               = New-Object O365Portal
         $this.MicrosoftGraph           = New-Object MicrosoftGraph
+        $this.MicrosoftGraphDll        = New-Object MicrosoftGraphDll
         $this.PnP                      = New-Object PnP
         $this.PowerPlatform            = New-Object PowerPlatform
         $this.PowerPlatformREST        = New-Object PowerPlatformREST
@@ -797,6 +801,103 @@ class MicrosoftGraph:Workload
     [void] Disconnect()
     {
         Disconnect-MSCloudLoginMicrosoftGraph
+    }
+}
+
+class MicrosoftGraphDll:Workload
+{
+    [string]
+    [ValidateSet('China', 'Global', 'USGov', 'USGovDoD', 'Germany', 'Custom')]
+    $GraphEnvironment = 'Global'
+
+    [string]
+    [ValidateSet('v1.0', 'beta')]
+    $ProfileName = 'v1.0'
+
+    [string]
+    $AuthorizationUrl
+
+    [string]
+    $ResourceUrl
+
+    [string]
+    $Scope
+
+    [string]
+    $TokenUrl
+
+    [System.Security.SecureString]
+    $AccessToken
+
+    [System.Object]
+    $GraphServiceClient
+
+    [System.Object]
+    $GraphServiceClientBeta
+
+    MicrosoftGraphDll()
+    {
+    }
+
+    [void] Connect()
+    {
+        ([Workload]$this).Setup()
+
+        if ($null -ne $this.Credentials -and [System.String]::IsNullOrEmpty($this.TenantId))
+        {
+            $this.TenantId = $this.Credentials.Username.Split('@')[1]
+        }
+
+        switch ($this.EnvironmentName)
+        {
+            'AzureCloud'
+            {
+                $this.AuthorizationUrl = "https://login.microsoftonline.com"
+                $this.GraphEnvironment = 'Global'
+                $this.ResourceUrl      = 'https://graph.microsoft.com'
+                $this.Scope            = 'https://graph.microsoft.com/.default'
+                $this.TokenUrl         = "https://login.microsoftonline.com/$($this.TenantId)/oauth2/v2.0/token"
+            }
+            'AzureUSGovernment'
+            {
+                $this.AuthorizationUrl = "https://login.microsoftonline.us"
+                $this.GraphEnvironment = 'USGov'
+                $this.ResourceUrl      = 'https://graph.microsoft.us'
+                $this.Scope            = 'https://graph.microsoft.us/.default'
+                $this.TokenUrl         = "https://login.microsoftonline.us/$($this.TenantId)/oauth2/v2.0/token"
+            }
+            'AzureDOD'
+            {
+                $this.AuthorizationUrl = "https://login.microsoftonline.us"
+                $this.GraphEnvironment = 'USGovDoD'
+                $this.ResourceUrl      = 'https://dod-graph.microsoft.us'
+                $this.Scope            = 'https://dod-graph.microsoft.us/.default'
+                $this.TokenUrl         = "https://login.microsoftonline.us/$($this.TenantId)/oauth2/v2.0/token"
+            }
+            'AzureChinaCloud'
+            {
+                $this.AuthorizationUrl = "https://login.chinacloudapi.cn"
+                $this.GraphEnvironment = 'China'
+                $this.ResourceUrl      = 'https://microsoftgraph.chinacloudapi.cn'
+                $this.Scope            = 'https://microsoftgraph.chinacloudapi.cn/.default'
+                $this.TokenUrl         = "https://login.chinacloudapi.cn/$($this.TenantId)/oauth2/v2.0/token"
+            }
+            'Custom'
+            {
+                $this.AuthorizationUrl = $Global:CustomGraphAuthorizationUrl
+                $this.GraphEnvironment = 'Custom'
+                $this.ResourceUrl      = $Global:CustomGraphResourceUrl
+                $this.Scope            = $Global:CustomGraphScope
+                $this.TokenUrl         = "$($Global:CustomGraphTokenUrl)/$($this.TenantId)/oauth2/v2.0/token"
+            }
+        }
+        $Script:MSCloudLoginConnectionProfile.MicrosoftGraphDll = $this
+        Connect-MSCloudLoginMicrosoftGraphDll
+    }
+
+    [void] Disconnect()
+    {
+        Disconnect-MSCloudLoginMicrosoftGraphDll
     }
 }
 

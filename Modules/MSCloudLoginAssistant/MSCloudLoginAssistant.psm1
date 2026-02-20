@@ -29,7 +29,7 @@ function Connect-M365Tenant
         [Parameter(Mandatory = $true)]
         [ValidateSet('AdminAPI', 'Azure', 'AzureDevOPS', 'EngageHub', 'ExchangeOnline', 'Fabric', 'Licensing', `
                 'O365Portal', 'SecurityComplianceCenter', 'PnP', 'PowerPlatforms', "PowerPlatformREST", `
-                'MicrosoftTeams', 'MicrosoftGraph', 'SharePointOnlineREST', 'Tasks', 'DefenderForEndpoint')]
+                'MicrosoftTeams', 'MicrosoftGraph', 'MicrosoftGraphDll', 'SharePointOnlineREST', 'Tasks', 'DefenderForEndpoint')]
         [System.String]
         $Workload,
 
@@ -177,6 +177,10 @@ function Connect-M365Tenant
         {
             $Script:MSCloudLoginConnectionProfile.MicrosoftGraph.Connect()
         }
+        'MicrosoftGraphDll'
+        {
+            $Script:MSCloudLoginConnectionProfile.MicrosoftGraphDll.Connect()
+        }
         'MicrosoftTeams'
         {
             $Script:MSCloudLoginConnectionProfile.Teams.Connect()
@@ -291,7 +295,7 @@ function Get-MSCloudLoginConnectionProfile
         [Parameter(Mandatory = $true)]
         [ValidateSet('AdminAPI', 'Azure', 'AzureDevOPS', 'EngageHub', 'ExchangeOnline', 'Fabric', 'Licensing', `
                 'O365Portal', 'SecurityComplianceCenter', 'PnP', 'PowerPlatforms', 'PowerPlatformREST', `
-                'MicrosoftTeams', 'MicrosoftGraph', 'SharePointOnlineREST', 'Tasks', 'DefenderForEndpoint')]
+                'MicrosoftTeams', 'MicrosoftGraph', 'MicrosoftGraphDll', 'SharePointOnlineREST', 'Tasks', 'DefenderForEndpoint')]
         [System.String]
         $Workload
     )
@@ -317,7 +321,7 @@ function Reset-MSCloudLoginConnectionProfileContext
         [Parameter()]
         [ValidateSet('AdminAPI', 'Azure', 'AzureDevOPS', 'EngageHub', 'ExchangeOnline', 'Fabric', 'Licensing', `
                 'O365Portal', 'SecurityComplianceCenter', 'PnP', 'PowerPlatform', 'PowerPlatformREST', `
-                'MicrosoftTeams', 'MicrosoftGraph', 'SharePointOnlineREST', 'Tasks', 'DefenderForEndpoint')]
+                'MicrosoftTeams', 'MicrosoftGraph', 'MicrosoftGraphDll', 'SharePointOnlineREST', 'Tasks', 'DefenderForEndpoint')]
         [System.String[]]
         $Workload
     )
