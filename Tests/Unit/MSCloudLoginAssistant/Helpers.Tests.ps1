@@ -34,8 +34,8 @@ Describe 'Get-MSCloudLoginCertificate' {
     Context 'When a thumbprint is provided' {
         It 'Should return the certificate from the current user store' {
             InModuleScope 'MSCloudLoginAssistant' {
-                Mock -CommandName Get-Item -MockWith {
-                    if ($Path -like 'Cert:\CurrentUser\My\*')
+                Mock -CommandName Find-MSCloudLoginStoreCertificate -MockWith {
+                    if ($StoreLocation -eq 'CurrentUser')
                     {
                         return [PSCustomObject]@{ Thumbprint = 'AA11'; Store = 'CurrentUser' }
                     }
@@ -44,14 +44,14 @@ Describe 'Get-MSCloudLoginCertificate' {
 
                 $certificate = Get-MSCloudLoginCertificate -CertificateThumbprint 'AA11'
                 $certificate.Store | Should -Be 'CurrentUser'
-                Should -Invoke Get-Item -Exactly 1
+                Should -Invoke Find-MSCloudLoginStoreCertificate -Exactly 1
             }
         }
 
         It 'Should fall back to the local machine store' {
             InModuleScope 'MSCloudLoginAssistant' {
-                Mock -CommandName Get-Item -MockWith {
-                    if ($Path -like 'Cert:\LocalMachine\My\*')
+                Mock -CommandName Find-MSCloudLoginStoreCertificate -MockWith {
+                    if ($StoreLocation -eq 'LocalMachine')
                     {
                         return [PSCustomObject]@{ Thumbprint = 'AA11'; Store = 'LocalMachine' }
                     }
@@ -60,13 +60,34 @@ Describe 'Get-MSCloudLoginCertificate' {
 
                 $certificate = Get-MSCloudLoginCertificate -CertificateThumbprint 'AA11'
                 $certificate.Store | Should -Be 'LocalMachine'
-                Should -Invoke Get-Item -Exactly 2
+                Should -Invoke Find-MSCloudLoginStoreCertificate -Exactly 2
+            }
+        }
+
+        It 'Should return a store certificate without Cert: drive properties' {
+            InModuleScope 'MSCloudLoginAssistant' {
+                $thumbprint = (Get-ChildItem -Path 'Cert:\CurrentUser\My' | Select-Object -First 1).Thumbprint
+                if ($null -eq $thumbprint)
+                {
+                    Set-ItResult -Skipped -Because 'the CurrentUser\My store is empty'
+                    return
+                }
+
+                $certificate = Find-MSCloudLoginStoreCertificate -StoreLocation 'CurrentUser' -CertificateThumbprint $thumbprint
+                $certificate.Thumbprint | Should -Be $thumbprint
+                $certificate.PSObject.Properties['PSDrive'] | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'Should return $null for an unknown thumbprint' {
+            InModuleScope 'MSCloudLoginAssistant' {
+                Find-MSCloudLoginStoreCertificate -StoreLocation 'CurrentUser' -CertificateThumbprint '0000000000000000000000000000000000000000' | Should -BeNullOrEmpty
             }
         }
 
         It 'Should name both stores when the certificate does not exist' {
             InModuleScope 'MSCloudLoginAssistant' {
-                Mock -CommandName Get-Item -MockWith { return $null }
+                Mock -CommandName Find-MSCloudLoginStoreCertificate -MockWith { return $null }
 
                 { Get-MSCloudLoginCertificate -CertificateThumbprint 'AA11' } |
                     Should -Throw "*'AA11' was not found in the CurrentUser\My nor the LocalMachine\My certificate store*"
@@ -220,6 +241,36 @@ Describe 'Test-MSCloudLoginConnectionReusable' {
 
             (Test-MSCloudLoginConnectionReusable -WorkloadProfile $workloadProfile `
                 -ProbeScript { return @{ TenantId = 'contoso' } } -Source 'Test') | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Microsoft Graph connection probe' {
+    It 'Should reject a Graph context of another application' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-MgContext -MockWith { [PSCustomObject]@{ ClientId = 'other-app'; Account = $null } }
+            $workloadProfile = [PSCustomObject]@{ ApplicationId = 'expected-app'; Credentials = $null }
+
+            & $Script:MSCloudLoginConnectionProbes.MicrosoftGraph $workloadProfile | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Should reject a Graph context of another account' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-MgContext -MockWith { [PSCustomObject]@{ ClientId = 'app'; Account = 'other@contoso.com' } }
+            $credential = [System.Management.Automation.PSCredential]::new('admin@contoso.com', (ConvertTo-SecureString -String 'x' -AsPlainText -Force))
+            $workloadProfile = [PSCustomObject]@{ ApplicationId = 'app'; Credentials = $credential }
+
+            & $Script:MSCloudLoginConnectionProbes.MicrosoftGraph $workloadProfile | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Should accept the Graph context of the profile' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-MgContext -MockWith { [PSCustomObject]@{ ClientId = 'expected-app'; Account = $null } }
+            $workloadProfile = [PSCustomObject]@{ ApplicationId = 'expected-app'; Credentials = $null }
+
+            & $Script:MSCloudLoginConnectionProbes.MicrosoftGraph $workloadProfile | Should -Not -BeNullOrEmpty
         }
     }
 }

@@ -12,9 +12,28 @@ foreach ($module in $privateModules)
     Write-Verbose "Importing workload $($module.FullName)"
     . $module.FullName
 }
+# The Microsoft Graph context is shared by every runspace of the process, so another runspace may
+# have connected it with a different application or account than this runspace's profile.
 $Script:MSCloudLoginConnectionProbes = @{
     Azure          = { Get-AzContext }
-    MicrosoftGraph = { Get-MgContext }
+    MicrosoftGraph = {
+        param ($WorkloadProfile)
+
+        $context = Get-MgContext
+        if ($null -eq $context)
+        {
+            return $null
+        }
+        if (-not [System.String]::IsNullOrEmpty($WorkloadProfile.ApplicationId) -and $context.ClientId -ne $WorkloadProfile.ApplicationId)
+        {
+            return $null
+        }
+        if ($null -ne $WorkloadProfile.Credentials -and $context.Account -ne $WorkloadProfile.Credentials.UserName)
+        {
+            return $null
+        }
+        return $context
+    }
     Teams          = { Get-CsTeamsCallingPolicy }
 }
 
