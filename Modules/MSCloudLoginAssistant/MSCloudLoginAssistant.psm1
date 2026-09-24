@@ -1881,7 +1881,7 @@ function Connect-MSCloudLoginRESTWorkload
 
         # Set the access token and connection state
         $workloadProfile.AccessToken = $accessToken
-        $workloadProfile.CompleteConnection($useMFA)
+        $workloadProfile.CompleteConnection($useMFA, (Get-MSCloudLoginAccessTokenExpiry -Token $accessToken))
 
         Add-MSCloudLoginAssistantEvent -Message "Successfully connected to $WorkloadName" -Source $source
     }

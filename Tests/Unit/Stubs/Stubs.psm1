@@ -198,7 +198,7 @@ function Connect-IPPSSession
         [Parameter()] [String]       $CertificateFilePath,
         [Parameter()] [SecureString] $CertificatePassword,
         [Parameter()] [String[]]     $CommandName,
-        [Parameter()] [Switch]       $ManagedIdentity,
+        [Parameter()] [String]       $AccessToken,
         [Parameter()] [Switch]       $EnableSearchOnlySession,
         [Parameter()] [Switch]       $ShowBanner
     )
