@@ -968,16 +968,41 @@ Describe 'Connect-MSCloudLoginAzure failure handling' {
         InModuleScope 'MSCloudLoginAssistant' {
             Mock -CommandName Connect-AzAccount -MockWith { }
             Mock -CommandName Get-AzContext -MockWith {
-                return @{ Environment = @{ ResourceManagerUrl = 'https://management.azure.com/' } }
+                return @{
+                    Account     = @{ Id = '00000000-0000-0000-0000-000000000001'; Type = 'ServicePrincipal' }
+                    Environment = @{ ResourceManagerUrl = 'https://management.azure.com/' }
+                }
             }
 
             $workloadProfile = $Script:MSCloudLoginConnectionProfile.Azure
             $workloadProfile.AuthenticationType = 'ServicePrincipalWithThumbprint'
+            $workloadProfile.ApplicationId = '00000000-0000-0000-0000-000000000001'
             $workloadProfile.CompleteConnection()
 
             Connect-MSCloudLoginAzure
 
             Should -Invoke Connect-AzAccount -Exactly 0
+        }
+    }
+
+    It 'Should reconnect when another application connected the Azure context' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Connect-AzAccount -MockWith { }
+            Mock -CommandName Get-AzContext -MockWith {
+                return @{
+                    Account     = @{ Id = '00000000-0000-0000-0000-000000000002'; Type = 'ServicePrincipal' }
+                    Environment = @{ ResourceManagerUrl = 'https://management.azure.com/' }
+                }
+            }
+
+            $workloadProfile = $Script:MSCloudLoginConnectionProfile.Azure
+            $workloadProfile.AuthenticationType = 'ServicePrincipalWithThumbprint'
+            $workloadProfile.ApplicationId = '00000000-0000-0000-0000-000000000001'
+            $workloadProfile.CompleteConnection()
+
+            Connect-MSCloudLoginAzure
+
+            Should -Invoke Connect-AzAccount -Exactly 1
         }
     }
 

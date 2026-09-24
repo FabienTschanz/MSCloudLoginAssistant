@@ -89,18 +89,18 @@ function Get-MSCloudLoginAccessTokenValue
 
 <#
 .SYNOPSIS
-    Reads the expiry time from the exp claim of a JSON Web Token.
+    Reads the claims of a JSON Web Token.
 
 .PARAMETER Token
     The access token, with or without the 'Bearer ' prefix.
 
 .OUTPUTS
-    System.DateTime. The local expiry time, or $null when the token is not a JSON Web Token with an exp claim.
+    System.Management.Automation.PSCustomObject. The claims, or $null when the token is not a JSON Web Token.
 #>
-function Get-MSCloudLoginAccessTokenExpiry
+function Get-MSCloudLoginAccessTokenClaims
 {
     [CmdletBinding()]
-    [OutputType([System.DateTime])]
+    [OutputType([System.Management.Automation.PSCustomObject])]
     param
     (
         [Parameter()]
@@ -123,14 +123,37 @@ function Get-MSCloudLoginAccessTokenExpiry
     {
         $payload = $segments[1].Replace('-', '+').Replace('_', '/')
         $payload = $payload.PadRight($payload.Length + (4 - $payload.Length % 4) % 4, '=')
-        $claims = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($payload)) | ConvertFrom-Json
+        return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($payload)) | ConvertFrom-Json
     }
     catch
     {
         return $null
     }
+}
 
-    if ($null -eq $claims.exp)
+<#
+.SYNOPSIS
+    Reads the expiry time from the exp claim of a JSON Web Token.
+
+.PARAMETER Token
+    The access token, with or without the 'Bearer ' prefix.
+
+.OUTPUTS
+    System.DateTime. The local expiry time, or $null when the token is not a JSON Web Token with an exp claim.
+#>
+function Get-MSCloudLoginAccessTokenExpiry
+{
+    [CmdletBinding()]
+    [OutputType([System.DateTime])]
+    param
+    (
+        [Parameter()]
+        [System.String]
+        $Token
+    )
+
+    $claims = Get-MSCloudLoginAccessTokenClaims -Token $Token
+    if ($null -eq $claims -or $null -eq $claims.exp)
     {
         return $null
     }
@@ -670,6 +693,92 @@ function Get-MSCloudLoginSPOUrlFromTenantId
         AdminUrl      = "https://$domain"
         ConnectionUrl = ("https://$domain").Replace('-admin', '')
     }
+}
+
+<#
+.SYNOPSIS
+    Returns the identity a workload profile connects with.
+
+.PARAMETER WorkloadProfile
+    The workload connection profile.
+
+.OUTPUTS
+    System.String. Authentication type, tenant, application id and user name of the profile. For access
+    tokens, the application and object id of the first token.
+#>
+function Get-MSCloudLoginConnectionIdentity
+{
+    [CmdletBinding()]
+    [OutputType([System.String])]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [System.Object]
+        $WorkloadProfile
+    )
+
+    $identity = '{0}|{1}|{2}|{3}' -f $WorkloadProfile.AuthenticationType, $WorkloadProfile.TenantId, $WorkloadProfile.ApplicationId, $WorkloadProfile.Credentials.UserName
+    if ($WorkloadProfile.AuthenticationType -eq 'AccessTokens' -and $WorkloadProfile.AccessTokens.Count -gt 0)
+    {
+        $claims = Get-MSCloudLoginAccessTokenClaims -Token (Get-MSCloudLoginAccessTokenValue -Token $WorkloadProfile.AccessTokens[0])
+        $identity += '|{0}{1}|{2}' -f $claims.appid, $claims.azp, $claims.oid
+    }
+    return $identity
+}
+
+<#
+.SYNOPSIS
+    Gets the identity a process-wide SDK session was last connected with.
+
+.DESCRIPTION
+    Stored as AppDomain data, which Windows PowerShell and PowerShell 7 share across all runspaces
+    of the process.
+
+.PARAMETER Workload
+    The workload name.
+
+.OUTPUTS
+    System.String. $null when no connection is recorded.
+#>
+function Get-MSCloudLoginProcessConnectionIdentity
+{
+    [CmdletBinding()]
+    [OutputType([System.String])]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [System.String]
+        $Workload
+    )
+
+    return [System.AppDomain]::CurrentDomain.GetData("MSCloudLoginAssistant.ConnectionIdentity.$Workload")
+}
+
+<#
+.SYNOPSIS
+    Records the identity a process-wide SDK session is connected with.
+
+.PARAMETER Workload
+    The workload name.
+
+.PARAMETER Identity
+    The identity from Get-MSCloudLoginConnectionIdentity. Omitted after a disconnect.
+#>
+function Set-MSCloudLoginProcessConnectionIdentity
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [System.String]
+        $Workload,
+
+        [Parameter()]
+        [System.String]
+        $Identity
+    )
+
+    [System.AppDomain]::CurrentDomain.SetData("MSCloudLoginAssistant.ConnectionIdentity.$Workload", $Identity)
 }
 
 <#
