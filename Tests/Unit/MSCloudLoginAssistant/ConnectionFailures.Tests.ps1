@@ -206,12 +206,89 @@ Describe 'Connect-MSCloudLoginExchangeOnline failure handling' {
         InModuleScope 'MSCloudLoginAssistant' {
             Mock -CommandName Get-ConnectionInformation -MockWith { return @() }
             Mock -CommandName Connect-ExchangeOnline -MockWith { }
+            Mock -CommandName Restore-MSCloudLoginProxyModule -MockWith { return $true }
 
             $Script:MSCloudLoginConnectionProfile.ExchangeOnline.CompleteConnection()
+            $Script:MSCloudLoginConnectionProfile.ExchangeOnline.LoadedAllCmdlets = $true
+            $Script:MSCloudLoginCurrentLoadedModule = 'EXO'
 
             Connect-MSCloudLoginExchangeOnline
 
             Should -Invoke Connect-ExchangeOnline -Exactly 0
+            Should -Invoke Restore-MSCloudLoginProxyModule -Exactly 0
+        }
+    }
+
+    It 'Should restore the Exchange Online proxy module after a Security & Compliance connection' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-ConnectionInformation -MockWith { return @() }
+            Mock -CommandName Connect-ExchangeOnline -MockWith { }
+            Mock -CommandName Restore-MSCloudLoginProxyModule -MockWith { return $true }
+
+            $Script:MSCloudLoginConnectionProfile.ExchangeOnline.CompleteConnection()
+            $Script:MSCloudLoginCurrentLoadedModule = 'SC'
+
+            Connect-MSCloudLoginExchangeOnline
+
+            $Script:MSCloudLoginCurrentLoadedModule | Should -Be 'EXO'
+            $Script:MSCloudLoginConnectionProfile.ExchangeOnline.Connected | Should -BeTrue
+            Should -Invoke Restore-MSCloudLoginProxyModule -Exactly 1 -ParameterFilter { $ProbeCommand -eq 'Get-AcceptedDomain' }
+            Should -Invoke Connect-ExchangeOnline -Exactly 0
+        }
+    }
+
+    It 'Should reconnect when the Exchange Online proxy module is no longer loaded and <CurrentLoadedModule> was loaded last' -TestCases @(
+        @{ CurrentLoadedModule = 'SC' }
+        @{ CurrentLoadedModule = 'EXO' }
+    ) {
+        param ($CurrentLoadedModule)
+        InModuleScope 'MSCloudLoginAssistant' -Parameters @{ CurrentLoadedModule = $CurrentLoadedModule } {
+            param ($CurrentLoadedModule)
+
+            Mock -CommandName Get-ConnectionInformation -MockWith { return @() }
+            Mock -CommandName Connect-ExchangeOnline -MockWith { }
+            Mock -CommandName Restore-MSCloudLoginProxyModule -MockWith { return $false }
+
+            $workloadProfile = $Script:MSCloudLoginConnectionProfile.ExchangeOnline
+            $workloadProfile.AuthenticationType = 'ServicePrincipalWithThumbprint'
+            $workloadProfile.ApplicationId = 'app-id'
+            $workloadProfile.TenantId = 'contoso.onmicrosoft.com'
+            $workloadProfile.CertificateThumbprint = 'thumbprint'
+            $workloadProfile.CompleteConnection()
+            $Script:MSCloudLoginCurrentLoadedModule = $CurrentLoadedModule
+
+            Connect-MSCloudLoginExchangeOnline
+
+            $Script:MSCloudLoginCurrentLoadedModule | Should -Be 'EXO'
+            $workloadProfile.Connected | Should -BeTrue
+            Should -Invoke Connect-ExchangeOnline -Exactly 1
+        }
+    }
+
+    It 'Should not adopt the proxy module of a Security & Compliance session' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Connect-ExchangeOnline -MockWith { }
+            Mock -CommandName Import-Module -MockWith { }
+            Mock -CommandName Get-ConnectionInformation -MockWith {
+                return @([PSCustomObject]@{
+                        Name         = 'ExchangeOnline_2'
+                        AppId        = 'app-id'
+                        Organization = 'contoso.onmicrosoft.com'
+                        ModuleName   = 'tmpEXO_compliance'
+                        IsEopSession = $true
+                    })
+            }
+
+            $workloadProfile = $Script:MSCloudLoginConnectionProfile.ExchangeOnline
+            $workloadProfile.AuthenticationType = 'ServicePrincipalWithThumbprint'
+            $workloadProfile.ApplicationId = 'app-id'
+            $workloadProfile.TenantId = 'contoso.onmicrosoft.com'
+            $workloadProfile.CertificateThumbprint = 'thumbprint'
+
+            Connect-MSCloudLoginExchangeOnline
+
+            Should -Invoke Import-Module -Exactly 0 -ParameterFilter { $Name -eq 'tmpEXO_compliance' }
+            Should -Invoke Connect-ExchangeOnline -Exactly 1
         }
     }
 
@@ -466,6 +543,76 @@ Describe 'Connect-MSCloudLoginSecurityCompliance failure handling' {
 
             { Connect-MSCloudLoginSecurityComplianceMFA } | Should -Throw '*the sign-in window was closed*'
             $workloadProfile.Connected | Should -BeFalse
+        }
+    }
+
+    It 'Should return immediately when the compliance proxy module is the current one' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Connect-IPPSSession -MockWith { }
+            Mock -CommandName Restore-MSCloudLoginProxyModule -MockWith { return $true }
+
+            $Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.CompleteConnection()
+            $Script:MSCloudLoginCurrentLoadedModule = 'SC'
+
+            Connect-MSCloudLoginSecurityCompliance
+
+            Should -Invoke Connect-IPPSSession -Exactly 0
+            Should -Invoke Restore-MSCloudLoginProxyModule -Exactly 0
+        }
+    }
+
+    It 'Should restore the compliance proxy module after an Exchange Online connection' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Connect-IPPSSession -MockWith { }
+            Mock -CommandName Restore-MSCloudLoginProxyModule -MockWith { return $true }
+
+            $Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.CompleteConnection()
+            $Script:MSCloudLoginCurrentLoadedModule = 'EXO'
+
+            Connect-MSCloudLoginSecurityCompliance
+
+            $Script:MSCloudLoginCurrentLoadedModule | Should -Be 'SC'
+            $Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.Connected | Should -BeTrue
+            Should -Invoke Restore-MSCloudLoginProxyModule -Exactly 1 -ParameterFilter { $ProbeCommand -eq 'Get-ComplianceSearch' }
+            Should -Invoke Connect-IPPSSession -Exactly 0
+        }
+    }
+
+    It 'Should reconnect when the compliance proxy module is no longer loaded' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Connect-IPPSSession -MockWith { }
+            Mock -CommandName Restore-MSCloudLoginProxyModule -MockWith { return $false }
+
+            $workloadProfile = $Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter
+            $workloadProfile.AuthenticationType = 'ServicePrincipalWithThumbprint'
+            $workloadProfile.ApplicationId = 'app-id'
+            $workloadProfile.TenantId = 'contoso.onmicrosoft.com'
+            $workloadProfile.CertificateThumbprint = 'thumbprint'
+            $workloadProfile.CompleteConnection()
+            $Script:MSCloudLoginCurrentLoadedModule = 'EXO'
+
+            Connect-MSCloudLoginSecurityCompliance
+
+            $Script:MSCloudLoginCurrentLoadedModule | Should -Be 'SC'
+            $workloadProfile.Connected | Should -BeTrue
+            Should -Invoke Connect-IPPSSession -Exactly 1
+        }
+    }
+
+    It 'Should mark the compliance proxy module as current after re-importing an open session' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Connect-IPPSSession -MockWith { }
+            Mock -CommandName Import-PSSession -MockWith { return 'tmpSCC_abcdefgh' }
+            Mock -CommandName Import-Module -MockWith { }
+            Mock -CommandName Get-PSSession -MockWith {
+                return @([PSCustomObject]@{ ComputerName = 'ps.compliance.protection.outlook.com'; State = 'Opened' })
+            }
+            $Script:MSCloudLoginCurrentLoadedModule = 'EXO'
+
+            Connect-MSCloudLoginSecurityCompliance
+
+            $Script:MSCloudLoginCurrentLoadedModule | Should -Be 'SC'
+            Should -Invoke Connect-IPPSSession -Exactly 0
         }
     }
 }
