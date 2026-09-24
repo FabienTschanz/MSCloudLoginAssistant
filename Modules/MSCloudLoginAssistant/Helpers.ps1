@@ -169,6 +169,108 @@ function Remove-MSCloudLoginProxyModule
 
 <#
 .SYNOPSIS
+    Re-imports the loaded proxy modules that export the specified command into the global scope.
+
+.DESCRIPTION
+    The re-imported commands take precedence over commands with the same name from other modules.
+    The modules are not reloaded.
+
+.PARAMETER ProbeCommand
+    A command name that identifies the proxy module (e.g. 'Get-AcceptedDomain').
+
+.PARAMETER Source
+    The event source to use for logging.
+
+.OUTPUTS
+    System.Boolean. $true when the proxy module was found and re-imported, $false otherwise.
+#>
+function Restore-MSCloudLoginProxyModule
+{
+    [CmdletBinding()]
+    [OutputType([System.Boolean])]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [System.String]
+        $ProbeCommand,
+
+        [Parameter(Mandatory = $true)]
+        [System.String]
+        $Source
+    )
+
+    [array]$proxyModules = Get-Module | Where-Object -FilterScript {
+        $_.ExportedCommands.Keys.Contains($ProbeCommand)
+    }
+
+    if ($proxyModules.Count -eq 0)
+    {
+        Add-MSCloudLoginAssistantEvent -Message "No loaded proxy module exports {$ProbeCommand}" -Source $Source
+        return $false
+    }
+
+    foreach ($proxyModule in $proxyModules)
+    {
+        try
+        {
+            Add-MSCloudLoginAssistantEvent -Message "Restoring command precedence of proxy module {$($proxyModule.Name)}" -Source $Source
+            # No -Force: re-imports the commands without reloading the module.
+            Import-Module -ModuleInfo $proxyModule -Global -DisableNameChecking -Verbose:$false -ErrorAction Stop
+        }
+        catch
+        {
+            Add-MSCloudLoginAssistantEvent -Message "Failed to restore proxy module {$($proxyModule.Name)}: $($_.Exception.Message)" -Source $Source
+            return $false
+        }
+    }
+
+    return $true
+}
+
+<#
+.SYNOPSIS
+    Disconnects either the Exchange Online or the Security & Compliance connections.
+
+.DESCRIPTION
+    Connections of the ExchangeOnlineManagement module are shared by all runspaces of the process.
+    Only connections of the requested kind are disconnected.
+
+.PARAMETER SecurityCompliance
+    Disconnects the Security & Compliance connections instead of the Exchange Online connections.
+
+.PARAMETER Source
+    The event source to use for logging.
+#>
+function Disconnect-MSCloudLoginExchangeConnection
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter()]
+        [switch]
+        $SecurityCompliance,
+
+        [Parameter(Mandatory = $true)]
+        [System.String]
+        $Source
+    )
+
+    # IsEopSession marks Security & Compliance connections.
+    [array]$connectionIds = Get-ConnectionInformation | Where-Object -FilterScript {
+        $null -ne $_.ConnectionId -and [System.Boolean]$_.IsEopSession -eq $SecurityCompliance.IsPresent
+    } | ForEach-Object -Process { $_.ConnectionId.ToString() }
+
+    if ($connectionIds.Count -eq 0)
+    {
+        return
+    }
+
+    Add-MSCloudLoginAssistantEvent -Message "Disconnecting connection(s) {$($connectionIds -join ', ')}" -Source $Source
+    Disconnect-ExchangeOnline -ConnectionId $connectionIds -Confirm:$false
+}
+
+<#
+.SYNOPSIS
     Finds a certificate by thumbprint in the My store of a store location.
 
 .DESCRIPTION

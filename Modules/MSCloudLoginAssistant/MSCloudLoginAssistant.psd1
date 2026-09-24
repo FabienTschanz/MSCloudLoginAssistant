@@ -12,7 +12,7 @@
     RootModule             = 'MSCloudLoginAssistant.psm1'
 
     # Version number of this module.
-    ModuleVersion          = '1.2.7'
+    ModuleVersion          = '1.2.8'
 
     # Supported PSEditions
     # CompatiblePSEditions = @()
@@ -112,7 +112,9 @@
             # IconUri = ''
 
             # ReleaseNotes of this module
-            ReleaseNotes = '* Reuse an established workload connection without re-running the connection setup.'
+            ReleaseNotes = '* Fixed an issue when Graph was connected using multiple runspaces.
+* Fixed an issue with a memory leak using the `Cert:` drive.
+* Fixed an issue with restoring proxy module command precedence.'
 
             # Prerelease string of this module
             # Prerelease = '-pre'

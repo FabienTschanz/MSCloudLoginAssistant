@@ -10,7 +10,21 @@ function Connect-MSCloudLoginSecurityCompliance
     Add-MSCloudLoginAssistantEvent -Message "Connection Profile: $($Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter | Out-String)" -Source $source
     if ($Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.Connected)
     {
-        return
+        if ($Script:MSCloudLoginCurrentLoadedModule -eq 'SC' -and
+            $null -ne (Get-Command -Name 'Get-ComplianceSearch' -ErrorAction SilentlyContinue))
+        {
+            return
+        }
+
+        # Shared commands such as Get-Group must resolve to the Security & Compliance proxy module.
+        if (Restore-MSCloudLoginProxyModule -ProbeCommand 'Get-ComplianceSearch' -Source $source)
+        {
+            $Script:MSCloudLoginCurrentLoadedModule = 'SC'
+            return
+        }
+
+        Add-MSCloudLoginAssistantEvent -Message 'Security & Compliance proxy module is no longer loaded, reconnecting' -Source $source
+        $Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.Connected = $false
     }
 
     $loadedModules = Get-Module
@@ -31,6 +45,7 @@ function Connect-MSCloudLoginSecurityCompliance
         Import-Module $ProxyModule -Global `
             -Verbose:$false | Out-Null
         $Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.CompleteConnection($Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.MultiFactorAuthentication)
+        $Script:MSCloudLoginCurrentLoadedModule = 'SC'
         Add-MSCloudLoginAssistantEvent -Message 'Reloaded the Security & Compliance Module' -Source $source
         return
     }
@@ -226,7 +241,7 @@ function Disconnect-MSCloudLoginSecurityCompliance
     if ($Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.Connected)
     {
         Add-MSCloudLoginAssistantEvent -Message 'Attempting to disconnect from Security & Compliance Center' -Source $source
-        Disconnect-ExchangeOnline -Confirm:$false
+        Disconnect-MSCloudLoginExchangeConnection -SecurityCompliance -Source $source
         $Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.Connected = $false
         Add-MSCloudLoginAssistantEvent -Message 'Successfully disconnected from Security & Compliance Center' -Source $source
     }

@@ -514,12 +514,105 @@ Describe 'Connect-M365Tenant end-to-end for the Security and Compliance Center' 
                     -TenantId 'contoso.onmicrosoft.com' `
                     -CertificateThumbprint 'AA11BB22CC33DD44EE55FF6677889900AABBCCDD'
 
+                Mock -CommandName Get-ConnectionInformation -MockWith {
+                    return @(
+                        [PSCustomObject]@{ ConnectionId = 'exo-connection'; IsEopSession = $false }
+                        [PSCustomObject]@{ ConnectionId = 'sc-connection'; IsEopSession = $true }
+                    )
+                }
+
                 Reset-MSCloudLoginConnectionProfileContext -Workload 'SecurityComplianceCenter'
 
                 Should -Invoke Disconnect-ExchangeOnline -Exactly 1
+                Should -Invoke Disconnect-ExchangeOnline -Exactly 1 -ParameterFilter { ($ConnectionId -join ',') -eq 'sc-connection' }
                 (Get-MSCloudLoginConnectionProfile -Workload 'SecurityComplianceCenter').Connected | Should -BeFalse
             }
         }
+    }
+}
+
+Describe 'Connect-M365Tenant end-to-end for Exchange Online and Security and Compliance in the same session' {
+
+    BeforeEach {
+        # Both proxy modules export Get-MSCLASharedGroup.
+        $proxyDefinitions = @{
+            tmpEXO_sharedexo = @'
+$global:MSCLASharedExoLoads = 1 + [int]$global:MSCLASharedExoLoads
+function Get-MSCLASharedGroup { 'ExchangeOnline' }
+function Get-AcceptedDomain { }
+Export-ModuleMember -Function Get-MSCLASharedGroup, Get-AcceptedDomain
+'@
+            tmpEXO_sharedsc  = @'
+$global:MSCLASharedScLoads = 1 + [int]$global:MSCLASharedScLoads
+function Get-MSCLASharedGroup { 'SecurityCompliance' }
+function Get-ComplianceSearch { }
+Export-ModuleMember -Function Get-MSCLASharedGroup, Get-ComplianceSearch
+'@
+        }
+        foreach ($moduleName in $proxyDefinitions.Keys)
+        {
+            Set-Content -Path (Join-Path -Path $TestDrive -ChildPath "$moduleName.psm1") -Value $proxyDefinitions[$moduleName]
+        }
+        $global:MSCLASharedExoLoads = 0
+        $global:MSCLASharedScLoads = 0
+
+        InModuleScope 'MSCloudLoginAssistant' -Parameters @{ ProxyDirectory = $TestDrive } {
+            param ($ProxyDirectory)
+
+            $Script:MSCloudLoginConnectionProfile = $null
+            $Script:MSCloudLoginTriedGetEnvironment = $true
+            $Script:CloudEnvironmentInfo = $null
+            $Script:MSCloudLoginCurrentLoadedModule = $null
+            $Script:ProxyDirectory = $ProxyDirectory
+        }
+    }
+
+    AfterEach {
+        Remove-Module -Name 'tmpEXO_sharedexo', 'tmpEXO_sharedsc' -Force -ErrorAction SilentlyContinue
+        Remove-Variable -Name 'MSCLASharedExoLoads', 'MSCLASharedScLoads' -Scope Global -ErrorAction SilentlyContinue
+
+        # Restores the stub probe commands.
+        $stubsModule = Get-Module -Name 'Stubs'
+        if ($null -ne $stubsModule)
+        {
+            Import-Module -ModuleInfo $stubsModule -Global -DisableNameChecking -WarningAction SilentlyContinue
+        }
+    }
+
+    It 'Should resolve the shared cmdlets to the workload that was connected last on every switch' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Remove-MSCloudLoginProxyModule -MockWith { }
+            Mock -CommandName Get-ConnectionInformation -MockWith { return @() }
+            Mock -CommandName Get-PSSession -MockWith { return @() }
+            Mock -CommandName Disconnect-ExchangeOnline -MockWith { }
+            Mock -CommandName Connect-ExchangeOnline -MockWith {
+                Import-Module -Name (Join-Path -Path $Script:ProxyDirectory -ChildPath 'tmpEXO_sharedexo.psm1') -Global -DisableNameChecking
+            }
+            Mock -CommandName Connect-IPPSSession -MockWith {
+                Import-Module -Name (Join-Path -Path $Script:ProxyDirectory -ChildPath 'tmpEXO_sharedsc.psm1') -Global -DisableNameChecking
+            }
+
+            $connectionParameters = @{
+                ApplicationId         = '11111111-1111-1111-1111-111111111111'
+                TenantId              = 'contoso.onmicrosoft.com'
+                CertificateThumbprint = 'AA11BB22CC33DD44EE55FF6677889900AABBCCDD'
+            }
+
+            foreach ($iteration in 1..3)
+            {
+                Connect-M365Tenant -Workload 'ExchangeOnline' @connectionParameters
+                Get-MSCLASharedGroup | Should -Be 'ExchangeOnline'
+
+                Connect-M365Tenant -Workload 'SecurityComplianceCenter' @connectionParameters
+                Get-MSCLASharedGroup | Should -Be 'SecurityCompliance'
+            }
+
+            Should -Invoke Connect-ExchangeOnline -Exactly 1
+            Should -Invoke Connect-IPPSSession -Exactly 1
+        }
+
+        $global:MSCLASharedExoLoads | Should -Be 1
+        $global:MSCLASharedScLoads | Should -Be 1
     }
 }
 

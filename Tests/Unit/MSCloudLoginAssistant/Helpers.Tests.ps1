@@ -172,6 +172,162 @@ Describe 'Remove-MSCloudLoginProxyModule' {
     }
 }
 
+Describe 'Restore-MSCloudLoginProxyModule' {
+
+    Context 'When two loaded proxy modules export the same command' {
+        BeforeEach {
+            # Both proxy modules export Get-MSCLARestoreShared.
+            $proxyDefinitions = @{
+                tmpEXO_restoreexo = @'
+$global:MSCLARestoreExoLoads = 1 + [int]$global:MSCLARestoreExoLoads
+function Get-MSCLARestoreShared { 'ExchangeOnline' }
+function Get-MSCLARestoreExoProbe { }
+Export-ModuleMember -Function Get-MSCLARestoreShared, Get-MSCLARestoreExoProbe
+'@
+                tmpEXO_restoresc  = @'
+$global:MSCLARestoreScLoads = 1 + [int]$global:MSCLARestoreScLoads
+function Get-MSCLARestoreShared { 'SecurityCompliance' }
+function Get-MSCLARestoreScProbe { }
+Export-ModuleMember -Function Get-MSCLARestoreShared, Get-MSCLARestoreScProbe
+'@
+            }
+
+            $global:MSCLARestoreExoLoads = 0
+            $global:MSCLARestoreScLoads = 0
+            foreach ($moduleName in @('tmpEXO_restoreexo', 'tmpEXO_restoresc'))
+            {
+                $modulePath = Join-Path -Path $TestDrive -ChildPath "$moduleName.psm1"
+                Set-Content -Path $modulePath -Value $proxyDefinitions[$moduleName]
+                Import-Module -Name $modulePath -Global -DisableNameChecking
+            }
+        }
+
+        AfterEach {
+            Remove-Module -Name 'tmpEXO_restoreexo', 'tmpEXO_restoresc' -Force -ErrorAction SilentlyContinue
+            Remove-Variable -Name 'MSCLARestoreExoLoads', 'MSCLARestoreScLoads' -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        It 'Should give the module that exports the probe command precedence again' {
+            Get-MSCLARestoreShared | Should -Be 'SecurityCompliance'
+
+            InModuleScope 'MSCloudLoginAssistant' {
+                Mock -CommandName Add-MSCloudLoginAssistantEvent -MockWith { }
+
+                Restore-MSCloudLoginProxyModule -ProbeCommand 'Get-MSCLARestoreExoProbe' -Source 'Test' | Should -BeTrue
+            }
+
+            Get-MSCLARestoreShared | Should -Be 'ExchangeOnline'
+            (Get-Command -Name 'Get-MSCLARestoreShared').Module.Name | Should -Be 'tmpEXO_restoreexo'
+        }
+
+        It 'Should switch the precedence back and forth without reloading either module' {
+            InModuleScope 'MSCloudLoginAssistant' {
+                Mock -CommandName Add-MSCloudLoginAssistantEvent -MockWith { }
+
+                foreach ($iteration in 1..3)
+                {
+                    Restore-MSCloudLoginProxyModule -ProbeCommand 'Get-MSCLARestoreExoProbe' -Source 'Test' | Should -BeTrue
+                    Get-MSCLARestoreShared | Should -Be 'ExchangeOnline'
+
+                    Restore-MSCloudLoginProxyModule -ProbeCommand 'Get-MSCLARestoreScProbe' -Source 'Test' | Should -BeTrue
+                    Get-MSCLARestoreShared | Should -Be 'SecurityCompliance'
+                }
+            }
+
+            $global:MSCLARestoreExoLoads | Should -Be 1
+            $global:MSCLARestoreScLoads | Should -Be 1
+            @(Get-Module -Name 'tmpEXO_restore*').Count | Should -Be 2
+        }
+    }
+
+    It 'Should report a missing proxy module without importing anything' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Add-MSCloudLoginAssistantEvent -MockWith { }
+            Mock -CommandName Import-Module -MockWith { }
+            Mock -CommandName Get-Module -MockWith {
+                $otherCommands = [System.Collections.Generic.Dictionary[string, object]]::new()
+                $otherCommands.Add('Get-Something', $null)
+                return @([PSCustomObject]@{ Name = 'SomethingElse'; ExportedCommands = $otherCommands })
+            }
+
+            Restore-MSCloudLoginProxyModule -ProbeCommand 'Get-AcceptedDomain' -Source 'Test' | Should -BeFalse
+
+            Should -Invoke Import-Module -Exactly 0
+        }
+    }
+
+    It 'Should report a failed import' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Add-MSCloudLoginAssistantEvent -MockWith { }
+            Mock -CommandName Import-Module -MockWith { throw 'import failed' }
+            Mock -CommandName Get-Module -MockWith {
+                return New-Module -Name 'tmpEXO_abc' -ScriptBlock { function Get-AcceptedDomain { } }
+            }
+
+            Restore-MSCloudLoginProxyModule -ProbeCommand 'Get-AcceptedDomain' -Source 'Test' | Should -BeFalse
+
+            Should -Invoke Add-MSCloudLoginAssistantEvent -ParameterFilter { $Message -like '*Failed to restore proxy module {tmpEXO_abc}*import failed*' }
+        }
+    }
+}
+
+Describe 'Disconnect-MSCloudLoginExchangeConnection' {
+
+    BeforeAll {
+        # Stubs prevent the autoload of ExchangeOnlineManagement, whose assemblies block Microsoft.Graph.Authentication in Windows PowerShell.
+        function global:Get-ConnectionInformation { }
+        function global:Disconnect-ExchangeOnline { param ([System.String[]] $ConnectionId, [switch] $Confirm) }
+    }
+
+    AfterAll {
+        Remove-Item -Path 'Function:\Get-ConnectionInformation', 'Function:\Disconnect-ExchangeOnline' -ErrorAction SilentlyContinue
+    }
+
+    BeforeEach {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Add-MSCloudLoginAssistantEvent -MockWith { }
+            Mock -CommandName Disconnect-ExchangeOnline -MockWith { }
+            Mock -CommandName Get-ConnectionInformation -MockWith {
+                return @(
+                    [PSCustomObject]@{ ConnectionId = [guid]'11111111-1111-1111-1111-111111111111'; IsEopSession = $false }
+                    [PSCustomObject]@{ ConnectionId = [guid]'22222222-2222-2222-2222-222222222222'; IsEopSession = $true }
+                    [PSCustomObject]@{ ConnectionId = [guid]'33333333-3333-3333-3333-333333333333'; IsEopSession = $false }
+                )
+            }
+        }
+    }
+
+    It 'Should disconnect only the Exchange Online connections' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Disconnect-MSCloudLoginExchangeConnection -Source 'Test'
+
+            Should -Invoke Disconnect-ExchangeOnline -Exactly 1 -ParameterFilter {
+                ($ConnectionId -join ',') -eq '11111111-1111-1111-1111-111111111111,33333333-3333-3333-3333-333333333333'
+            }
+        }
+    }
+
+    It 'Should disconnect only the Security & Compliance connections' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Disconnect-MSCloudLoginExchangeConnection -SecurityCompliance -Source 'Test'
+
+            Should -Invoke Disconnect-ExchangeOnline -Exactly 1 -ParameterFilter {
+                ($ConnectionId -join ',') -eq '22222222-2222-2222-2222-222222222222'
+            }
+        }
+    }
+
+    It 'Should not call Disconnect-ExchangeOnline without a matching connection' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-ConnectionInformation -MockWith { return $null }
+
+            Disconnect-MSCloudLoginExchangeConnection -Source 'Test'
+
+            Should -Invoke Disconnect-ExchangeOnline -Exactly 0
+        }
+    }
+}
+
 Describe 'Get-MSCloudLoginEndpointInfo' {
 
     It 'Should throw when neither the environment nor a default entry is defined' {
