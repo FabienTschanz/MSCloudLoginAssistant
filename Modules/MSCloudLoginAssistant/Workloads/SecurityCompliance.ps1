@@ -241,7 +241,7 @@ function Disconnect-MSCloudLoginSecurityCompliance
     if ($Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.Connected)
     {
         Add-MSCloudLoginAssistantEvent -Message 'Attempting to disconnect from Security & Compliance Center' -Source $source
-        Disconnect-ExchangeOnline -Confirm:$false
+        Disconnect-MSCloudLoginExchangeConnection -SecurityCompliance -Source $source
         $Script:MSCloudLoginConnectionProfile.SecurityComplianceCenter.Connected = $false
         Add-MSCloudLoginAssistantEvent -Message 'Successfully disconnected from Security & Compliance Center' -Source $source
     }

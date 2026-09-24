@@ -288,6 +288,7 @@ Describe 'Connect-MSCloudLoginExchangeOnline failure handling' {
             Connect-MSCloudLoginExchangeOnline
 
             Should -Invoke Import-Module -Exactly 0 -ParameterFilter { $Name -eq 'tmpEXO_compliance' }
+            Should -Invoke Disconnect-ExchangeOnline -Exactly 0
             Should -Invoke Connect-ExchangeOnline -Exactly 1
         }
     }

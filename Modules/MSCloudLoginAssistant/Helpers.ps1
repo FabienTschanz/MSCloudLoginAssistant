@@ -229,6 +229,48 @@ function Restore-MSCloudLoginProxyModule
 
 <#
 .SYNOPSIS
+    Disconnects either the Exchange Online or the Security & Compliance connections.
+
+.DESCRIPTION
+    Connections of the ExchangeOnlineManagement module are shared by all runspaces of the process.
+    Only connections of the requested kind are disconnected.
+
+.PARAMETER SecurityCompliance
+    Disconnects the Security & Compliance connections instead of the Exchange Online connections.
+
+.PARAMETER Source
+    The event source to use for logging.
+#>
+function Disconnect-MSCloudLoginExchangeConnection
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter()]
+        [switch]
+        $SecurityCompliance,
+
+        [Parameter(Mandatory = $true)]
+        [System.String]
+        $Source
+    )
+
+    # IsEopSession marks Security & Compliance connections.
+    [array]$connectionIds = Get-ConnectionInformation | Where-Object -FilterScript {
+        $null -ne $_.ConnectionId -and [System.Boolean]$_.IsEopSession -eq $SecurityCompliance.IsPresent
+    } | ForEach-Object -Process { $_.ConnectionId.ToString() }
+
+    if ($connectionIds.Count -eq 0)
+    {
+        return
+    }
+
+    Add-MSCloudLoginAssistantEvent -Message "Disconnecting connection(s) {$($connectionIds -join ', ')}" -Source $Source
+    Disconnect-ExchangeOnline -ConnectionId $connectionIds -Confirm:$false
+}
+
+<#
+.SYNOPSIS
     Finds a certificate by thumbprint in the My store of a store location.
 
 .DESCRIPTION

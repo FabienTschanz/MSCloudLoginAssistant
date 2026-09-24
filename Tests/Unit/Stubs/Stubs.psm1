@@ -66,6 +66,7 @@ function Disconnect-ExchangeOnline
 {
     [CmdletBinding()]
     param (
+        [Parameter()] [String[]] $ConnectionId,
         [Parameter()] [Switch] $Confirm
     )
 }

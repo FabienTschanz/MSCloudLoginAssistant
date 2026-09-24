@@ -271,6 +271,63 @@ Export-ModuleMember -Function Get-MSCLARestoreShared, Get-MSCLARestoreScProbe
     }
 }
 
+Describe 'Disconnect-MSCloudLoginExchangeConnection' {
+
+    BeforeAll {
+        # Stubs prevent the autoload of ExchangeOnlineManagement, whose assemblies block Microsoft.Graph.Authentication in Windows PowerShell.
+        function global:Get-ConnectionInformation { }
+        function global:Disconnect-ExchangeOnline { param ([System.String[]] $ConnectionId, [switch] $Confirm) }
+    }
+
+    AfterAll {
+        Remove-Item -Path 'Function:\Get-ConnectionInformation', 'Function:\Disconnect-ExchangeOnline' -ErrorAction SilentlyContinue
+    }
+
+    BeforeEach {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Add-MSCloudLoginAssistantEvent -MockWith { }
+            Mock -CommandName Disconnect-ExchangeOnline -MockWith { }
+            Mock -CommandName Get-ConnectionInformation -MockWith {
+                return @(
+                    [PSCustomObject]@{ ConnectionId = [guid]'11111111-1111-1111-1111-111111111111'; IsEopSession = $false }
+                    [PSCustomObject]@{ ConnectionId = [guid]'22222222-2222-2222-2222-222222222222'; IsEopSession = $true }
+                    [PSCustomObject]@{ ConnectionId = [guid]'33333333-3333-3333-3333-333333333333'; IsEopSession = $false }
+                )
+            }
+        }
+    }
+
+    It 'Should disconnect only the Exchange Online connections' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Disconnect-MSCloudLoginExchangeConnection -Source 'Test'
+
+            Should -Invoke Disconnect-ExchangeOnline -Exactly 1 -ParameterFilter {
+                ($ConnectionId -join ',') -eq '11111111-1111-1111-1111-111111111111,33333333-3333-3333-3333-333333333333'
+            }
+        }
+    }
+
+    It 'Should disconnect only the Security & Compliance connections' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Disconnect-MSCloudLoginExchangeConnection -SecurityCompliance -Source 'Test'
+
+            Should -Invoke Disconnect-ExchangeOnline -Exactly 1 -ParameterFilter {
+                ($ConnectionId -join ',') -eq '22222222-2222-2222-2222-222222222222'
+            }
+        }
+    }
+
+    It 'Should not call Disconnect-ExchangeOnline without a matching connection' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-ConnectionInformation -MockWith { return $null }
+
+            Disconnect-MSCloudLoginExchangeConnection -Source 'Test'
+
+            Should -Invoke Disconnect-ExchangeOnline -Exactly 0
+        }
+    }
+}
+
 Describe 'Get-MSCloudLoginEndpointInfo' {
 
     It 'Should throw when neither the environment nor a default entry is defined' {

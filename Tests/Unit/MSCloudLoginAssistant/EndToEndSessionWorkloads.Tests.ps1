@@ -514,9 +514,17 @@ Describe 'Connect-M365Tenant end-to-end for the Security and Compliance Center' 
                     -TenantId 'contoso.onmicrosoft.com' `
                     -CertificateThumbprint 'AA11BB22CC33DD44EE55FF6677889900AABBCCDD'
 
+                Mock -CommandName Get-ConnectionInformation -MockWith {
+                    return @(
+                        [PSCustomObject]@{ ConnectionId = 'exo-connection'; IsEopSession = $false }
+                        [PSCustomObject]@{ ConnectionId = 'sc-connection'; IsEopSession = $true }
+                    )
+                }
+
                 Reset-MSCloudLoginConnectionProfileContext -Workload 'SecurityComplianceCenter'
 
                 Should -Invoke Disconnect-ExchangeOnline -Exactly 1
+                Should -Invoke Disconnect-ExchangeOnline -Exactly 1 -ParameterFilter { ($ConnectionId -join ',') -eq 'sc-connection' }
                 (Get-MSCloudLoginConnectionProfile -Workload 'SecurityComplianceCenter').Connected | Should -BeFalse
             }
         }
