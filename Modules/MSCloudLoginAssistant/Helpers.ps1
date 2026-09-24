@@ -89,6 +89,57 @@ function Get-MSCloudLoginAccessTokenValue
 
 <#
 .SYNOPSIS
+    Reads the expiry time from the exp claim of a JSON Web Token.
+
+.PARAMETER Token
+    The access token, with or without the 'Bearer ' prefix.
+
+.OUTPUTS
+    System.DateTime. The local expiry time, or $null when the token is not a JSON Web Token with an exp claim.
+#>
+function Get-MSCloudLoginAccessTokenExpiry
+{
+    [CmdletBinding()]
+    [OutputType([System.DateTime])]
+    param
+    (
+        [Parameter()]
+        [System.String]
+        $Token
+    )
+
+    if ([System.String]::IsNullOrEmpty($Token))
+    {
+        return $null
+    }
+
+    $segments = ($Token -replace '^Bearer\s+', '').Split('.')
+    if ($segments.Count -ne 3)
+    {
+        return $null
+    }
+
+    try
+    {
+        $payload = $segments[1].Replace('-', '+').Replace('_', '/')
+        $payload = $payload.PadRight($payload.Length + (4 - $payload.Length % 4) % 4, '=')
+        $claims = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($payload)) | ConvertFrom-Json
+    }
+    catch
+    {
+        return $null
+    }
+
+    if ($null -eq $claims.exp)
+    {
+        return $null
+    }
+
+    return [System.DateTimeOffset]::FromUnixTimeSeconds([System.Int64]$claims.exp).LocalDateTime
+}
+
+<#
+.SYNOPSIS
     Extracts the tenant domain from the UserName of a credential.
 
 .DESCRIPTION
@@ -628,19 +679,24 @@ function Get-MSCloudLoginSPOUrlFromTenantId
 .DESCRIPTION
     Central connection-freshness check for all workloads. The connection is NOT
     reusable when the profile is not connected, when the connection timestamp is
-    missing, when a token-based authentication type has exceeded its expiration
-    window or when the optional probe script indicates that the underlying SDK
-    context is gone. In all of those cases the profile is marked as disconnected
-    so that a reconnect is performed.
+    missing, when the access token expires within the renewal window, when a
+    token-based authentication type without a known token expiry has exceeded its
+    expiration window or when the optional probe script indicates that the
+    underlying SDK context is gone. In all of those cases the profile is marked as
+    disconnected so that a reconnect is performed.
 
 .PARAMETER WorkloadProfile
     The workload connection profile to check.
 
 .PARAMETER TokenExpirationMinutes
-    The number of minutes after which a token-based connection is considered expired.
+    The number of minutes after which a token-based connection without a known token expiry is considered expired.
+
+.PARAMETER TokenRenewalMinutes
+    The number of minutes before the known token expiry at which the connection is renewed.
+    Not applied to the AccessTokens authentication type, whose tokens cannot be renewed.
 
 .PARAMETER TokenBasedAuthTypes
-    The authentication types whose tokens expire and require renewal.
+    The authentication types whose tokens expire and require renewal when the token expiry is unknown.
 
 .PARAMETER ProbeScript
     Optional script block that returns the SDK context (e.g. { Get-MgContext }).
@@ -667,6 +723,10 @@ function Test-MSCloudLoginConnectionReusable
         $TokenExpirationMinutes = 50,
 
         [Parameter()]
+        [System.Int32]
+        $TokenRenewalMinutes = 5,
+
+        [Parameter()]
         [System.String[]]
         $TokenBasedAuthTypes = @('ServicePrincipalWithSecret', 'Identity'),
 
@@ -691,7 +751,22 @@ function Test-MSCloudLoginConnectionReusable
         return $false
     }
 
-    if ($WorkloadProfile.AuthenticationType -in $TokenBasedAuthTypes -and `
+    if ($null -ne $WorkloadProfile.TokenExpiresOn)
+    {
+        $renewalMinutes = $TokenRenewalMinutes
+        if ($WorkloadProfile.AuthenticationType -eq 'AccessTokens')
+        {
+            $renewalMinutes = 0
+        }
+
+        if ($WorkloadProfile.TokenExpiresOn -le [System.DateTime]::Now.AddMinutes($renewalMinutes))
+        {
+            Add-MSCloudLoginAssistantEvent -Message "Token expires at {$($WorkloadProfile.TokenExpiresOn)}, renewing" -Source $Source
+            $WorkloadProfile.Connected = $false
+            return $false
+        }
+    }
+    elseif ($WorkloadProfile.AuthenticationType -in $TokenBasedAuthTypes -and `
         (Get-Date -Date $WorkloadProfile.ConnectedDateTime) -lt [System.DateTime]::Now.AddMinutes(-$TokenExpirationMinutes))
     {
         Add-MSCloudLoginAssistantEvent -Message 'Token is about to expire, renewing' -Source $Source

@@ -328,6 +328,34 @@ Describe 'Disconnect-MSCloudLoginExchangeConnection' {
     }
 }
 
+Describe 'Get-MSCloudLoginAccessTokenExpiry' {
+
+    It 'Should read the exp claim of a JSON Web Token with or without the Bearer prefix' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            $expiresOn = [System.DateTimeOffset]::FromUnixTimeSeconds(1790270000).LocalDateTime
+            $payload = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes('{"exp":1790270000,"aud":"https://ps.compliance.protection.outlook.com"}')).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+            $token = "eyJhbGciOiJub25lIn0.$payload.signature"
+
+            Get-MSCloudLoginAccessTokenExpiry -Token $token | Should -Be $expiresOn
+            Get-MSCloudLoginAccessTokenExpiry -Token "Bearer $token" | Should -Be $expiresOn
+        }
+    }
+
+    It 'Should return $null for <Description>' -TestCases @(
+        @{ Description = 'an opaque token'; Token = 'opaque-token' }
+        @{ Description = 'an empty token'; Token = '' }
+        @{ Description = 'a token without exp claim'; Token = 'eyJhbGciOiJub25lIn0.eyJhdWQiOiJ4In0.signature' }
+        @{ Description = 'a token with an invalid payload'; Token = 'a.%%%.c' }
+    ) {
+        param ($Token)
+        InModuleScope 'MSCloudLoginAssistant' -Parameters @{ Token = $Token } {
+            param ($Token)
+
+            Get-MSCloudLoginAccessTokenExpiry -Token $Token | Should -BeNullOrEmpty
+        }
+    }
+}
+
 Describe 'Get-MSCloudLoginEndpointInfo' {
 
     It 'Should throw when neither the environment nor a default entry is defined' {
@@ -369,6 +397,63 @@ Describe 'Get-MSCloudLoginEndpointInfo' {
 }
 
 Describe 'Test-MSCloudLoginConnectionReusable' {
+
+    Context 'When the token expiry is known' {
+        BeforeEach {
+            InModuleScope 'MSCloudLoginAssistant' {
+                Mock -CommandName Add-MSCloudLoginAssistantEvent -MockWith { }
+            }
+        }
+
+        It 'Should renew a <AuthenticationType> connection whose token expires within five minutes' -TestCases @(
+            @{ AuthenticationType = 'Identity' }
+            @{ AuthenticationType = 'ServicePrincipalWithThumbprint' }
+        ) {
+            param ($AuthenticationType)
+            InModuleScope 'MSCloudLoginAssistant' -Parameters @{ AuthenticationType = $AuthenticationType } {
+                param ($AuthenticationType)
+
+                $workloadProfile = [PSCustomObject]@{
+                    Connected          = $true
+                    ConnectedDateTime  = [System.DateTime]::Now.ToString()
+                    AuthenticationType = $AuthenticationType
+                    TokenExpiresOn     = [System.DateTime]::Now.AddMinutes(4)
+                }
+
+                Test-MSCloudLoginConnectionReusable -WorkloadProfile $workloadProfile -TokenBasedAuthTypes @() -Source 'Test' | Should -BeFalse
+                $workloadProfile.Connected | Should -BeFalse
+            }
+        }
+
+        It 'Should reuse a connection whose token is valid beyond the renewal window even after 50 minutes' {
+            InModuleScope 'MSCloudLoginAssistant' {
+                $workloadProfile = [PSCustomObject]@{
+                    Connected          = $true
+                    ConnectedDateTime  = [System.DateTime]::Now.AddMinutes(-70).ToString()
+                    AuthenticationType = 'Identity'
+                    TokenExpiresOn     = [System.DateTime]::Now.AddMinutes(20)
+                }
+
+                Test-MSCloudLoginConnectionReusable -WorkloadProfile $workloadProfile -Source 'Test' | Should -BeTrue
+            }
+        }
+
+        It 'Should keep a supplied access token until it expires' {
+            InModuleScope 'MSCloudLoginAssistant' {
+                $workloadProfile = [PSCustomObject]@{
+                    Connected          = $true
+                    ConnectedDateTime  = [System.DateTime]::Now.ToString()
+                    AuthenticationType = 'AccessTokens'
+                    TokenExpiresOn     = [System.DateTime]::Now.AddMinutes(2)
+                }
+
+                Test-MSCloudLoginConnectionReusable -WorkloadProfile $workloadProfile -Source 'Test' | Should -BeTrue
+
+                $workloadProfile.TokenExpiresOn = [System.DateTime]::Now.AddSeconds(-1)
+                Test-MSCloudLoginConnectionReusable -WorkloadProfile $workloadProfile -Source 'Test' | Should -BeFalse
+            }
+        }
+    }
 
     It 'Should treat a failing probe as a lost connection' {
         InModuleScope 'MSCloudLoginAssistant' {

@@ -88,14 +88,14 @@
     }
 
     SecurityComplianceCenter = @{
-        AzureCloud        = @{ ConnectionUrl = 'https://ps.compliance.protection.outlook.com/powershell-liveid/'; AuthorizationUrl = 'https://login.microsoftonline.com/organizations' }
-        AzureUSGovernment = @{ ConnectionUrl = 'https://ps.compliance.protection.office365.us/powershell-liveid/'; AuthorizationUrl = 'https://login.microsoftonline.us/organizations' }
-        AzureDOD          = @{ ConnectionUrl = 'https://l5.ps.compliance.protection.office365.us/powershell-liveid/'; AuthorizationUrl = 'https://login.microsoftonline.us/organizations' }
-        AzureChinaCloud   = @{ ConnectionUrl = 'https://ps.compliance.protection.partner.outlook.cn/powershell-liveid/'; AuthorizationUrl = 'https://login.chinacloudapi.cn/organizations' }
-        AzureFranceCloud  = @{ ConnectionUrl = 'https://ps.compliance.protection.svc.sovcloud.fr/PowerShell-LiveID'; AuthorizationUrl = 'https://login.sovcloud-identity.fr/organizations' }
-        AzureGermanyCloud = @{ ConnectionUrl = 'https://ps.compliance.protection.svc.sovcloud.de/PowerShell-LiveID'; AuthorizationUrl = 'https://login.sovcloud-identity.de/organizations' }
-        Custom            = @{ ConnectionUrl = 'CustomSCCConnectionUrl'; AuthorizationUrl = 'CustomSCCAzureADAuthorizationEndpointUri' }
-        default           = @{ ConnectionUrl = 'https://ps.compliance.protection.outlook.com/powershell-liveid/'; AuthorizationUrl = 'https://login.microsoftonline.com/organizations' }
+        AzureCloud        = @{ ConnectionUrl = 'https://ps.compliance.protection.outlook.com/powershell-liveid/'; AuthorizationUrl = 'https://login.microsoftonline.com/organizations'; ResourceUrl = 'https://ps.compliance.protection.outlook.com' }
+        AzureUSGovernment = @{ ConnectionUrl = 'https://ps.compliance.protection.office365.us/powershell-liveid/'; AuthorizationUrl = 'https://login.microsoftonline.us/organizations'; ResourceUrl = 'https://ps.compliance.protection.office365.us' }
+        AzureDOD          = @{ ConnectionUrl = 'https://l5.ps.compliance.protection.office365.us/powershell-liveid/'; AuthorizationUrl = 'https://login.microsoftonline.us/organizations'; ResourceUrl = 'https://l5.ps.compliance.protection.office365.us' }
+        AzureChinaCloud   = @{ ConnectionUrl = 'https://ps.compliance.protection.partner.outlook.cn/powershell-liveid/'; AuthorizationUrl = 'https://login.chinacloudapi.cn/organizations'; ResourceUrl = 'https://ps.compliance.protection.partner.outlook.cn' }
+        AzureFranceCloud  = @{ ConnectionUrl = 'https://ps.compliance.protection.svc.sovcloud.fr/PowerShell-LiveID'; AuthorizationUrl = 'https://login.sovcloud-identity.fr/organizations'; ResourceUrl = 'https://ps.compliance.protection.svc.sovcloud.fr' }
+        AzureGermanyCloud = @{ ConnectionUrl = 'https://ps.compliance.protection.svc.sovcloud.de/PowerShell-LiveID'; AuthorizationUrl = 'https://login.sovcloud-identity.de/organizations'; ResourceUrl = 'https://ps.compliance.protection.svc.sovcloud.de' }
+        Custom            = @{ ConnectionUrl = 'CustomSCCConnectionUrl'; AuthorizationUrl = 'CustomSCCAzureADAuthorizationEndpointUri'; ResourceUrl = 'CustomSCCResourceUrl' }
+        default           = @{ ConnectionUrl = 'https://ps.compliance.protection.outlook.com/powershell-liveid/'; AuthorizationUrl = 'https://login.microsoftonline.com/organizations'; ResourceUrl = 'https://ps.compliance.protection.outlook.com' }
     }
 
     SharePointOnlineREST  = @{

@@ -107,6 +107,9 @@ class Workload : ICloneable
     [string]
     $ConnectedDateTime
 
+    [System.Nullable[System.DateTime]]
+    $TokenExpiresOn
+
     [PSCredential]
     $Credentials
 
@@ -269,9 +272,15 @@ class Workload : ICloneable
 
     CompleteConnection([bool]$mfaUsed = $false)
     {
+        $this.CompleteConnection($mfaUsed, $null)
+    }
+
+    CompleteConnection([bool]$mfaUsed, [System.Nullable[System.DateTime]]$tokenExpiresOn)
+    {
         $this.Connected = $true
         $this.ConnectedDateTime = [System.DateTime]::Now.ToString()
         $this.MultiFactorAuthentication = $mfaUsed
+        $this.TokenExpiresOn = $tokenExpiresOn
     }
 }
 
@@ -932,6 +941,9 @@ class SecurityComplianceCenter:Workload
     [string]
     $AzureADAuthorizationEndpointUri
 
+    [string]
+    $ResourceUrl
+
     SecurityComplianceCenter()
     {
     }
@@ -943,6 +955,7 @@ class SecurityComplianceCenter:Workload
         $endpointInfo = Get-MSCloudLoginEndpointInfo -Workload 'SecurityComplianceCenter' -EnvironmentName $this.EnvironmentName
         $this.ConnectionUrl    = $endpointInfo.ConnectionUrl
         $this.AuthorizationUrl = $endpointInfo.AuthorizationUrl
+        $this.ResourceUrl      = $endpointInfo.ResourceUrl
 
         $connectionRegex = "ps.compliance.protection.(partner.)?(outlook|office365).(com|us|de|cn)"
         $connectionInformation = Get-ConnectionInformation | Where-Object Name -Like "ExchangeOnlineProtection_*"

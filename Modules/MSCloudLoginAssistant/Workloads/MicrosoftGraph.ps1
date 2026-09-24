@@ -40,9 +40,10 @@ function Connect-MSCloudLoginMicrosoftGraph
         $resourceEndpoint = $Script:MSCloudLoginConnectionProfile.MicrosoftGraph.ResourceUrl.TrimEnd('/')
         $accessToken = Get-AuthToken -Resource $resourceEndpoint -Identity
 
+        $tokenExpiresOn = Get-MSCloudLoginAccessTokenExpiry -Token $accessToken
         $accessToken = $accessToken | ConvertTo-SecureString -AsPlainText -Force
         Connect-MgGraph -AccessToken $accessToken -Environment $Script:MSCloudLoginConnectionProfile.MicrosoftGraph.GraphEnvironment -NoWelcome
-        $Script:MSCloudLoginConnectionProfile.MicrosoftGraph.CompleteConnection()
+        $Script:MSCloudLoginConnectionProfile.MicrosoftGraph.CompleteConnection($false, $tokenExpiresOn)
         $Script:MSCloudLoginConnectionProfile.MicrosoftGraph.TenantId = (Get-MgContext).TenantId
     }
     else

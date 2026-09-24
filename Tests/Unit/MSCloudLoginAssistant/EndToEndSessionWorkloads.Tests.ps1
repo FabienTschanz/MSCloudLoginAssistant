@@ -461,17 +461,66 @@ Describe 'Connect-M365Tenant end-to-end for the Security and Compliance Center' 
     }
 
     Context 'When connecting with a managed identity' {
-        It 'Should connect the compliance session as a managed identity' {
+        It 'Should connect the compliance session with a managed identity token' {
             InModuleScope 'MSCloudLoginAssistant' {
                 Mock -CommandName Remove-MSCloudLoginProxyModule -MockWith { }
                 Mock -CommandName Get-ConnectionInformation -MockWith { return $null }
                 Mock -CommandName Get-PSSession -MockWith { return @() }
                 Mock -CommandName Connect-IPPSSession -MockWith { }
+                Mock -CommandName Get-AuthToken -MockWith { return 'managed-identity-token' }
 
                 Connect-M365Tenant -Workload 'SecurityComplianceCenter' -Identity -TenantId 'contoso.onmicrosoft.com'
 
                 (Get-MSCloudLoginConnectionProfile -Workload 'SecurityComplianceCenter').Connected | Should -BeTrue
-                Should -Invoke Connect-IPPSSession -Exactly 1 -ParameterFilter { $ManagedIdentity.IsPresent }
+                Should -Invoke Get-AuthToken -Exactly 1 -ParameterFilter {
+                    $Resource -eq 'https://ps.compliance.protection.outlook.com' -and $Identity.IsPresent
+                }
+                Should -Invoke Connect-IPPSSession -Exactly 1 -ParameterFilter {
+                    $AccessToken -eq 'managed-identity-token' -and
+                    $Organization -eq 'contoso.onmicrosoft.com' -and
+                    $ConnectionUri -eq 'https://ps.compliance.protection.outlook.com/powershell-liveid/'
+                }
+            }
+        }
+    }
+
+    Context 'When connecting with access tokens' {
+        It 'Should reconnect with a replacement access token' {
+            InModuleScope 'MSCloudLoginAssistant' {
+                Mock -CommandName Remove-MSCloudLoginProxyModule -MockWith { }
+                Mock -CommandName Restore-MSCloudLoginProxyModule -MockWith { return $true }
+                Mock -CommandName Get-ConnectionInformation -MockWith { return $null }
+                Mock -CommandName Get-PSSession -MockWith { return @() }
+                Mock -CommandName Connect-IPPSSession -MockWith { }
+                Mock -CommandName Connect-ExchangeOnline -MockWith { }
+
+                Connect-M365Tenant -Workload 'SecurityComplianceCenter' -AccessTokens @('first-token') -TenantId 'contoso.onmicrosoft.com'
+                Connect-M365Tenant -Workload 'SecurityComplianceCenter' -AccessTokens @('first-token') -TenantId 'contoso.onmicrosoft.com'
+                Connect-M365Tenant -Workload 'SecurityComplianceCenter' -AccessTokens @('replacement-token') -TenantId 'contoso.onmicrosoft.com'
+
+                (Get-MSCloudLoginConnectionProfile -Workload 'SecurityComplianceCenter').Connected | Should -BeTrue
+                Should -Invoke Connect-ExchangeOnline -Exactly 0
+                Should -Invoke Connect-IPPSSession -Exactly 2
+                Should -Invoke Connect-IPPSSession -Exactly 1 -ParameterFilter { $AccessToken -eq 'first-token' }
+                Should -Invoke Connect-IPPSSession -Exactly 1 -ParameterFilter { $AccessToken -eq 'replacement-token' }
+            }
+        }
+    }
+
+    Context 'When the tenant lives in a sovereign cloud' {
+        It 'Should use the Security & Compliance resource <ExpectedResource> for <EnvironmentName>' -TestCases @(
+            @{ EnvironmentName = 'AzureCloud'; ExpectedResource = 'https://ps.compliance.protection.outlook.com' }
+            @{ EnvironmentName = 'AzureUSGovernment'; ExpectedResource = 'https://ps.compliance.protection.office365.us' }
+            @{ EnvironmentName = 'AzureDOD'; ExpectedResource = 'https://l5.ps.compliance.protection.office365.us' }
+            @{ EnvironmentName = 'AzureChinaCloud'; ExpectedResource = 'https://ps.compliance.protection.partner.outlook.cn' }
+            @{ EnvironmentName = 'AzureFranceCloud'; ExpectedResource = 'https://ps.compliance.protection.svc.sovcloud.fr' }
+            @{ EnvironmentName = 'AzureGermanyCloud'; ExpectedResource = 'https://ps.compliance.protection.svc.sovcloud.de' }
+        ) {
+            param ($EnvironmentName, $ExpectedResource)
+            InModuleScope 'MSCloudLoginAssistant' -Parameters @{ EnvironmentName = $EnvironmentName; ExpectedResource = $ExpectedResource } {
+                param ($EnvironmentName, $ExpectedResource)
+
+                (Get-MSCloudLoginEndpointInfo -Workload 'SecurityComplianceCenter' -EnvironmentName $EnvironmentName).ResourceUrl | Should -Be $ExpectedResource
             }
         }
     }

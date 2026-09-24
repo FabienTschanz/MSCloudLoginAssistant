@@ -114,7 +114,9 @@
             # ReleaseNotes of this module
             ReleaseNotes = '* Fixed an issue when Graph was connected using multiple runspaces.
 * Fixed an issue with a memory leak using the `Cert:` drive.
-* Fixed an issue with restoring proxy module command precedence.'
+* Fixed an issue with restoring proxy module command precedence.
+* Fixed an issue with Security & Compliance connections using Identity and AccessTokens.
+* Fixed an issue with connection renewal based on the token expiry.'
 
             # Prerelease string of this module
             # Prerelease = '-pre'
