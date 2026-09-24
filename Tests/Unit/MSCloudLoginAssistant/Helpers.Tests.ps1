@@ -487,10 +487,16 @@ Describe 'Test-MSCloudLoginConnectionReusable' {
 }
 
 Describe 'Microsoft Graph connection probe' {
+
+    AfterAll {
+        [System.AppDomain]::CurrentDomain.SetData('MSCloudLoginAssistant.ConnectionIdentity.MicrosoftGraph', $null)
+    }
+
     It 'Should reject a Graph context of another application' {
         InModuleScope 'MSCloudLoginAssistant' {
             Mock -CommandName Get-MgContext -MockWith { [PSCustomObject]@{ ClientId = 'other-app'; Account = $null } }
-            $workloadProfile = [PSCustomObject]@{ ApplicationId = 'expected-app'; Credentials = $null }
+            $workloadProfile = [PSCustomObject]@{ AuthenticationType = 'ServicePrincipalWithThumbprint'; ApplicationId = 'expected-app'; Credentials = $null }
+            Set-MSCloudLoginProcessConnectionIdentity -Workload 'MicrosoftGraph' -Identity (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $workloadProfile)
 
             & $Script:MSCloudLoginConnectionProbes.MicrosoftGraph $workloadProfile | Should -BeNullOrEmpty
         }
@@ -500,7 +506,18 @@ Describe 'Microsoft Graph connection probe' {
         InModuleScope 'MSCloudLoginAssistant' {
             Mock -CommandName Get-MgContext -MockWith { [PSCustomObject]@{ ClientId = 'app'; Account = 'other@contoso.com' } }
             $credential = [System.Management.Automation.PSCredential]::new('admin@contoso.com', (ConvertTo-SecureString -String 'x' -AsPlainText -Force))
-            $workloadProfile = [PSCustomObject]@{ ApplicationId = 'app'; Credentials = $credential }
+            $workloadProfile = [PSCustomObject]@{ AuthenticationType = 'Credentials'; ApplicationId = 'app'; Credentials = $credential }
+            Set-MSCloudLoginProcessConnectionIdentity -Workload 'MicrosoftGraph' -Identity (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $workloadProfile)
+
+            & $Script:MSCloudLoginConnectionProbes.MicrosoftGraph $workloadProfile | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Should reject a managed identity profile when another identity connected the process' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-MgContext -MockWith { [PSCustomObject]@{ ClientId = 'other-app'; Account = $null } }
+            $workloadProfile = [PSCustomObject]@{ AuthenticationType = 'Identity'; TenantId = 'contoso.onmicrosoft.com'; ApplicationId = $null; Credentials = $null }
+            Set-MSCloudLoginProcessConnectionIdentity -Workload 'MicrosoftGraph' -Identity 'ServicePrincipalWithThumbprint|contoso.onmicrosoft.com|other-app|'
 
             & $Script:MSCloudLoginConnectionProbes.MicrosoftGraph $workloadProfile | Should -BeNullOrEmpty
         }
@@ -509,10 +526,251 @@ Describe 'Microsoft Graph connection probe' {
     It 'Should accept the Graph context of the profile' {
         InModuleScope 'MSCloudLoginAssistant' {
             Mock -CommandName Get-MgContext -MockWith { [PSCustomObject]@{ ClientId = 'expected-app'; Account = $null } }
-            $workloadProfile = [PSCustomObject]@{ ApplicationId = 'expected-app'; Credentials = $null }
+            $workloadProfile = [PSCustomObject]@{ AuthenticationType = 'ServicePrincipalWithThumbprint'; ApplicationId = 'expected-app'; Credentials = $null }
+            Set-MSCloudLoginProcessConnectionIdentity -Workload 'MicrosoftGraph' -Identity (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $workloadProfile)
 
             & $Script:MSCloudLoginConnectionProbes.MicrosoftGraph $workloadProfile | Should -Not -BeNullOrEmpty
         }
+    }
+}
+
+Describe 'Get-MSCloudLoginConnectionIdentity' {
+
+    It 'Should distinguish access tokens of different principals' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            $newToken = {
+                param ($Claims)
+                $encode = { param ($Text) [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Text)).TrimEnd('=').Replace('+', '-').Replace('/', '_') }
+                '{0}.{1}.signature' -f (& $encode '{"alg":"none"}'), (& $encode $Claims)
+            }
+            $first = [PSCustomObject]@{ AuthenticationType = 'AccessTokens'; TenantId = 'contoso.onmicrosoft.com'; AccessTokens = @(& $newToken '{"appid":"app-1","oid":"object-1"}') }
+            $second = [PSCustomObject]@{ AuthenticationType = 'AccessTokens'; TenantId = 'contoso.onmicrosoft.com'; AccessTokens = @(& $newToken '{"appid":"app-2","oid":"object-2"}') }
+            $renewed = [PSCustomObject]@{ AuthenticationType = 'AccessTokens'; TenantId = 'contoso.onmicrosoft.com'; AccessTokens = @(& $newToken '{"appid":"app-1","oid":"object-1","exp":1}') }
+
+            Get-MSCloudLoginConnectionIdentity -WorkloadProfile $first | Should -Not -Be (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $second)
+            Get-MSCloudLoginConnectionIdentity -WorkloadProfile $first | Should -Be (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $renewed)
+        }
+    }
+}
+
+Describe 'Compare-InputParametersForChange with stored access tokens' {
+
+    It 'Should ignore the token a <AuthenticationType> connection acquired itself' -TestCases @(
+        @{ AuthenticationType = 'Credentials'; Workload = 'MicrosoftGraph' }
+        @{ AuthenticationType = 'ServicePrincipalWithThumbprint'; Workload = 'MicrosoftTeams' }
+    ) {
+        param ($AuthenticationType, $Workload)
+        InModuleScope 'MSCloudLoginAssistant' -Parameters @{ AuthenticationType = $AuthenticationType; Workload = $Workload } {
+            param ($AuthenticationType, $Workload)
+            $Script:MSCloudLoginConnectionProfile = New-Object MSCloudLoginConnectionProfile
+            $profileName = if ($Workload -eq 'MicrosoftTeams') { 'Teams' } else { $Workload }
+            $workloadProfile = $Script:MSCloudLoginConnectionProfile.$profileName
+            $credential = [System.Management.Automation.PSCredential]::new('admin@contoso.onmicrosoft.com', (ConvertTo-SecureString -String 'x' -AsPlainText -Force))
+            $parameters = @{ Workload = $Workload }
+            if ($AuthenticationType -eq 'Credentials')
+            {
+                $workloadProfile.Credentials = $credential
+                $workloadProfile.ApplicationId = '14d82eec-204b-4c2f-b7e8-296a70dab67e'
+                $workloadProfile.TenantId = 'contoso.onmicrosoft.com'
+                $parameters.Credential = $credential
+            }
+            else
+            {
+                $workloadProfile.ApplicationId = 'app'
+                $workloadProfile.CertificateThumbprint = 'ABC'
+                $workloadProfile.TenantId = 'contoso.onmicrosoft.com'
+                $parameters += @{ ApplicationId = 'app'; CertificateThumbprint = 'ABC'; TenantId = 'contoso.onmicrosoft.com' }
+            }
+            $workloadProfile.AuthenticationType = $AuthenticationType
+            $workloadProfile.RequestedAuthenticationType = $AuthenticationType
+            $workloadProfile.AccessTokens = @('acquired-token')
+
+            Compare-InputParametersForChange -CurrentParamSet $parameters | Should -BeFalse
+        }
+    }
+
+    It 'Should detect a different access token passed by the caller' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            $Script:MSCloudLoginConnectionProfile = New-Object MSCloudLoginConnectionProfile
+            $workloadProfile = $Script:MSCloudLoginConnectionProfile.MicrosoftGraph
+            $workloadProfile.AuthenticationType = 'AccessTokens'
+            $workloadProfile.RequestedAuthenticationType = 'AccessTokens'
+            $workloadProfile.TenantId = 'contoso.onmicrosoft.com'
+            $workloadProfile.AccessTokens = @('first-token')
+
+            Compare-InputParametersForChange -CurrentParamSet @{ Workload = 'MicrosoftGraph'; TenantId = 'contoso.onmicrosoft.com'; AccessTokens = @('second-token') } | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Azure connection probe' {
+
+    BeforeAll {
+        function global:Get-AzContext { }
+    }
+
+    AfterAll {
+        Remove-Item -Path 'Function:\Get-AzContext' -ErrorAction SilentlyContinue
+    }
+
+    It 'Should reject an Azure context of <Description>' -TestCases @(
+        @{ Description = 'another application'; AuthenticationType = 'ServicePrincipalWithThumbprint'; AccountId = 'other-app'; AccountType = 'ServicePrincipal'; SubscriptionId = $null }
+        @{ Description = 'another account'; AuthenticationType = 'Credentials'; AccountId = 'other@contoso.com'; AccountType = 'User'; SubscriptionId = $null }
+        @{ Description = 'a user instead of the managed identity'; AuthenticationType = 'Identity'; AccountId = 'admin@contoso.com'; AccountType = 'User'; SubscriptionId = $null }
+        @{ Description = 'another subscription'; AuthenticationType = 'ServicePrincipalWithThumbprint'; AccountId = 'expected-app'; AccountType = 'ServicePrincipal'; SubscriptionId = 'other-subscription' }
+    ) {
+        param ($AuthenticationType, $AccountId, $AccountType, $SubscriptionId)
+        InModuleScope 'MSCloudLoginAssistant' -Parameters @{ AuthenticationType = $AuthenticationType; AccountId = $AccountId; AccountType = $AccountType; SubscriptionId = $SubscriptionId } {
+            param ($AuthenticationType, $AccountId, $AccountType, $SubscriptionId)
+            $context = [PSCustomObject]@{
+                Account      = [PSCustomObject]@{ Id = $AccountId; Type = $AccountType }
+                Subscription = [PSCustomObject]@{ Id = $SubscriptionId }
+            }
+            Mock -CommandName Get-AzContext -MockWith { $context }
+            $credential = [System.Management.Automation.PSCredential]::new('admin@contoso.com', (ConvertTo-SecureString -String 'x' -AsPlainText -Force))
+            $workloadProfile = [PSCustomObject]@{
+                AuthenticationType = $AuthenticationType
+                ApplicationId      = 'expected-app'
+                Credentials        = $credential
+                SubscriptionId     = if ($null -ne $SubscriptionId) { 'expected-subscription' } else { $null }
+            }
+
+            & $Script:MSCloudLoginConnectionProbes.Azure $workloadProfile | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Should accept the Azure context of <AuthenticationType>' -TestCases @(
+        @{ AuthenticationType = 'ServicePrincipalWithSecret'; AccountId = 'expected-app'; AccountType = 'ServicePrincipal' }
+        @{ AuthenticationType = 'CredentialsWithTenantId'; AccountId = 'Admin@contoso.com'; AccountType = 'User' }
+        @{ AuthenticationType = 'AccessTokens'; AccountId = 'MSCloudLoginAssistant'; AccountType = 'AccessToken' }
+        @{ AuthenticationType = 'Identity'; AccountId = 'MSI@50342'; AccountType = 'ManagedService' }
+    ) {
+        param ($AuthenticationType, $AccountId, $AccountType)
+        InModuleScope 'MSCloudLoginAssistant' -Parameters @{ AuthenticationType = $AuthenticationType; AccountId = $AccountId; AccountType = $AccountType } {
+            param ($AuthenticationType, $AccountId, $AccountType)
+            $context = [PSCustomObject]@{
+                Account      = [PSCustomObject]@{ Id = $AccountId; Type = $AccountType }
+                Subscription = [PSCustomObject]@{ Id = 'expected-subscription' }
+            }
+            Mock -CommandName Get-AzContext -MockWith { $context }
+            $credential = [System.Management.Automation.PSCredential]::new('admin@contoso.com', (ConvertTo-SecureString -String 'x' -AsPlainText -Force))
+            $workloadProfile = [PSCustomObject]@{
+                AuthenticationType = $AuthenticationType
+                ApplicationId      = 'expected-app'
+                Credentials        = $credential
+                SubscriptionId     = 'expected-subscription'
+            }
+
+            & $Script:MSCloudLoginConnectionProbes.Azure $workloadProfile | Should -Not -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'Teams connection probe' {
+
+    BeforeAll {
+        function global:Get-CsTeamsCallingPolicy { }
+    }
+
+    BeforeEach {
+        InModuleScope 'MSCloudLoginAssistant' {
+            $Script:MSCloudLoginTeamsVerifiedTime = $null
+        }
+    }
+
+    AfterAll {
+        Remove-Item -Path 'Function:\Get-CsTeamsCallingPolicy' -ErrorAction SilentlyContinue
+        [System.AppDomain]::CurrentDomain.SetData('MSCloudLoginAssistant.ConnectionIdentity.Teams', $null)
+    }
+
+    It 'Should not call Teams again within 3 minutes of a verification' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-CsTeamsCallingPolicy -MockWith { [PSCustomObject]@{ Identity = 'Global' } }
+            $workloadProfile = [PSCustomObject]@{ AuthenticationType = 'ServicePrincipalWithThumbprint'; TenantId = 'contoso.onmicrosoft.com'; ApplicationId = 'expected-app'; Credentials = $null }
+            Set-MSCloudLoginProcessConnectionIdentity -Workload 'Teams' -Identity (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $workloadProfile)
+
+            & $Script:MSCloudLoginConnectionProbes.Teams $workloadProfile | Should -Not -BeNullOrEmpty
+            & $Script:MSCloudLoginConnectionProbes.Teams $workloadProfile | Should -Not -BeNullOrEmpty
+            Should -Invoke -CommandName Get-CsTeamsCallingPolicy -Times 1 -Exactly
+        }
+    }
+
+    It 'Should call Teams again after 3 minutes' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-CsTeamsCallingPolicy -MockWith { [PSCustomObject]@{ Identity = 'Global' } }
+            $workloadProfile = [PSCustomObject]@{ AuthenticationType = 'ServicePrincipalWithThumbprint'; TenantId = 'contoso.onmicrosoft.com'; ApplicationId = 'expected-app'; Credentials = $null }
+            Set-MSCloudLoginProcessConnectionIdentity -Workload 'Teams' -Identity (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $workloadProfile)
+            $Script:MSCloudLoginTeamsVerifiedTime = [System.DateTime]::UtcNow.AddMinutes(-4)
+
+            & $Script:MSCloudLoginConnectionProbes.Teams $workloadProfile | Should -Not -BeNullOrEmpty
+            Should -Invoke -CommandName Get-CsTeamsCallingPolicy -Times 1 -Exactly
+        }
+    }
+
+    It 'Should reject another identity within 3 minutes of a verification' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-CsTeamsCallingPolicy -MockWith { [PSCustomObject]@{ Identity = 'Global' } }
+            $workloadProfile = [PSCustomObject]@{ AuthenticationType = 'ServicePrincipalWithThumbprint'; TenantId = 'contoso.onmicrosoft.com'; ApplicationId = 'expected-app'; Credentials = $null }
+            Set-MSCloudLoginProcessConnectionIdentity -Workload 'Teams' -Identity 'ServicePrincipalWithThumbprint|contoso.onmicrosoft.com|other-app|'
+            $Script:MSCloudLoginTeamsVerifiedTime = [System.DateTime]::UtcNow
+
+            & $Script:MSCloudLoginConnectionProbes.Teams $workloadProfile | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Should reject a Teams session that <Description>' -TestCases @(
+        @{ Description = 'another application connected'; RecordedApplicationId = 'other-app' }
+        @{ Description = 'was disconnected'; RecordedApplicationId = $null }
+    ) {
+        param ($RecordedApplicationId)
+        InModuleScope 'MSCloudLoginAssistant' -Parameters @{ RecordedApplicationId = $RecordedApplicationId } {
+            param ($RecordedApplicationId)
+            Mock -CommandName Get-CsTeamsCallingPolicy -MockWith { [PSCustomObject]@{ Identity = 'Global' } }
+            $workloadProfile = [PSCustomObject]@{ AuthenticationType = 'ServicePrincipalWithThumbprint'; TenantId = 'contoso.onmicrosoft.com'; ApplicationId = 'expected-app'; Credentials = $null }
+            if ($null -ne $RecordedApplicationId)
+            {
+                $recordedProfile = [PSCustomObject]@{ AuthenticationType = 'ServicePrincipalWithThumbprint'; TenantId = 'contoso.onmicrosoft.com'; ApplicationId = $RecordedApplicationId; Credentials = $null }
+                Set-MSCloudLoginProcessConnectionIdentity -Workload 'Teams' -Identity (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $recordedProfile)
+            }
+            else
+            {
+                Set-MSCloudLoginProcessConnectionIdentity -Workload 'Teams'
+            }
+
+            & $Script:MSCloudLoginConnectionProbes.Teams $workloadProfile | Should -BeNullOrEmpty
+            Should -Invoke -CommandName Get-CsTeamsCallingPolicy -Times 0 -Exactly
+        }
+    }
+
+    It 'Should accept the Teams session of the profile' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Mock -CommandName Get-CsTeamsCallingPolicy -MockWith { [PSCustomObject]@{ Identity = 'Global' } }
+            $workloadProfile = [PSCustomObject]@{ AuthenticationType = 'ServicePrincipalWithThumbprint'; TenantId = 'contoso.onmicrosoft.com'; ApplicationId = 'expected-app'; Credentials = $null }
+            Set-MSCloudLoginProcessConnectionIdentity -Workload 'Teams' -Identity (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $workloadProfile)
+
+            & $Script:MSCloudLoginConnectionProbes.Teams $workloadProfile | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'Should keep the recorded identity visible to other runspaces' {
+        InModuleScope 'MSCloudLoginAssistant' {
+            Set-MSCloudLoginProcessConnectionIdentity -Workload 'Teams' -Identity 'recorded-identity'
+        }
+        $runspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+        $runspace.Open()
+        try
+        {
+            $powerShell = [System.Management.Automation.PowerShell]::Create()
+            $powerShell.Runspace = $runspace
+            $result = $powerShell.AddScript("[System.AppDomain]::CurrentDomain.GetData('MSCloudLoginAssistant.ConnectionIdentity.Teams')").Invoke()
+            $powerShell.Dispose()
+        }
+        finally
+        {
+            $runspace.Dispose()
+        }
+
+        $result | Should -Be 'recorded-identity'
     }
 }
 

@@ -126,6 +126,9 @@ function Connect-MSCloudLoginMicrosoftGraph
             throw
         }
     }
+
+    Set-MSCloudLoginProcessConnectionIdentity -Workload 'MicrosoftGraph' `
+        -Identity (Get-MSCloudLoginConnectionIdentity -WorkloadProfile $Script:MSCloudLoginConnectionProfile.MicrosoftGraph)
 }
 
 function Connect-MSCloudLoginMSGraphWithUser
@@ -322,6 +325,7 @@ function Disconnect-MSCloudLoginMicrosoftGraph
         Add-MSCloudLoginAssistantEvent -Message 'Attempting to disconnect from Microsoft Graph' -Source $source
         Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
         $Script:MSCloudLoginConnectionProfile.MicrosoftGraph.Connected = $false
+        Set-MSCloudLoginProcessConnectionIdentity -Workload 'MicrosoftGraph'
         Add-MSCloudLoginAssistantEvent -Message 'Successfully disconnected from Microsoft Graph' -Source $source
     }
     else

@@ -116,7 +116,12 @@
 * Fixed an issue with a memory leak using the `Cert:` drive.
 * Fixed an issue with restoring proxy module command precedence.
 * Fixed an issue with Security & Compliance connections using Identity and AccessTokens.
-* Fixed an issue with connection renewal based on the token expiry.'
+* Fixed an issue with connection renewal based on the token expiry.
+* Fixed an issue when Azure, Microsoft Graph or Teams was connected with different applications or accounts using multiple runspaces.
+* Fixed an issue where Microsoft Graph and Teams reconnected on every call after storing their own access tokens.
+* Fixed an issue where Azure connections were saved to the Azure context file of the user.
+* Fixed an issue where a failed Teams connection was reported as connected.
+* Changed the Teams connection check to run at most every 3 minutes per runspace.'
 
             # Prerelease string of this module
             # Prerelease = '-pre'

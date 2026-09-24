@@ -25,7 +25,8 @@ function Connect-AzAccount
         [Parameter()] [SecureString] $CertificatePassword,
         [Parameter()] [String]       $CertificatePath,
         [Parameter()] [String]       $AccessToken,
-        [Parameter()] [String]       $AccountId
+        [Parameter()] [String]       $AccountId,
+        [Parameter()] [String]       $Scope
     )
 }
 
@@ -34,7 +35,8 @@ function Disconnect-AzAccount
     [CmdletBinding()]
     param (
         [Parameter()] [String] $Username,
-        [Parameter()] [String] $TenantId
+        [Parameter()] [String] $TenantId,
+        [Parameter()] [String] $Scope
     )
 }
 

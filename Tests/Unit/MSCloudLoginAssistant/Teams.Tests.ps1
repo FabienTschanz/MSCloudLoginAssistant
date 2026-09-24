@@ -76,6 +76,32 @@ Describe 'Connect-MSCloudLoginTeams' {
             }
         }
 
+        It 'Should keep only the tokens of the last connection' {
+            InModuleScope 'MSCloudLoginAssistant' {
+                Mock -CommandName Connect-MicrosoftTeams -MockWith { }
+                Mock -CommandName Add-MSCloudLoginAssistantEvent -MockWith { }
+                Mock -CommandName Get-MSCloudLoginAccessToken -MockWith { return 'access-token' }
+                Mock -CommandName Test-MSCloudLoginConnectionReusable -MockWith { return $false }
+
+                $Script:MSCloudLoginConnectionProfile = New-Object MSCloudLoginConnectionProfile
+                $Script:MSCloudLoginConnectionProfile.Teams.AuthenticationType = 'ServicePrincipalWithThumbprint'
+                $Script:MSCloudLoginConnectionProfile.Teams.ApplicationId = 'app-id'
+                $Script:MSCloudLoginConnectionProfile.Teams.TenantId = 'tenant-id'
+                $Script:MSCloudLoginConnectionProfile.Teams.CertificateThumbprint = 'thumbprint'
+                $Script:MSCloudLoginConnectionProfile.Teams.GraphScope = 'https://graph.microsoft.com/.default'
+                $Script:MSCloudLoginConnectionProfile.Teams.TeamsScope = 'https://teams.microsoft.com/.default'
+                $Script:MSCloudLoginConnectionProfile.Teams.AuthorizationUrl = 'https://login.microsoftonline.com'
+                $Script:MSCloudLoginConnectionProfile.Teams.TokenUrl = 'https://login.microsoftonline.com/organizations/oauth2/v2.0/token'
+                $Script:CustomEnvConfig.CustomEnvironment = $false
+                $Script:CustomEnvConfig.CustomTeamsEndpoints = $null
+
+                Connect-MSCloudLoginTeams
+                Connect-MSCloudLoginTeams
+
+                $Script:MSCloudLoginConnectionProfile.Teams.AccessTokens.Count | Should -Be 2
+            }
+        }
+
         It 'Should call Connect-MicrosoftTeams with CertificateThumbprint when GraphScope is not set and not custom env' {
             InModuleScope 'MSCloudLoginAssistant' {
                 Mock -CommandName Connect-MicrosoftTeams -MockWith { }
@@ -276,6 +302,28 @@ Describe 'Connect-MSCloudLoginTeams' {
                     $TenantId -eq 'tenant-id' -and
                     $Certificate -eq $testCert
                 }
+            }
+        }
+
+        It 'Should stay disconnected when Connect-MicrosoftTeams writes an error' {
+            InModuleScope 'MSCloudLoginAssistant' {
+                Mock -CommandName Connect-MicrosoftTeams -MockWith { Write-Error -Message 'Connection failed' }
+                Mock -CommandName Add-MSCloudLoginAssistantEvent -MockWith { }
+                Mock -CommandName Test-MSCloudLoginConnectionReusable -MockWith { return $false }
+                Mock -CommandName Get-MSCloudLoginCertificate -MockWith { return [Security.Cryptography.X509Certificates.X509Certificate2]::new() }
+                Mock -CommandName Set-MSCloudLoginProcessConnectionIdentity -MockWith { }
+
+                $Script:MSCloudLoginConnectionProfile = New-Object MSCloudLoginConnectionProfile
+                $Script:MSCloudLoginConnectionProfile.Teams.AuthenticationType = 'ServicePrincipalWithPath'
+                $Script:MSCloudLoginConnectionProfile.Teams.ApplicationId = 'app-id'
+                $Script:MSCloudLoginConnectionProfile.Teams.TenantId = 'tenant-id'
+                $Script:MSCloudLoginConnectionProfile.Teams.CertificatePath = 'C:\cert.pfx'
+                $Script:CustomEnvConfig.CustomEnvironment = $false
+                $Script:CustomEnvConfig.CustomTeamsEndpoints = $null
+
+                { Connect-MSCloudLoginTeams } | Should -Throw -ExpectedMessage '*Connection failed*'
+                $Script:MSCloudLoginConnectionProfile.Teams.Connected | Should -BeFalse
+                Should -Invoke Set-MSCloudLoginProcessConnectionIdentity -Exactly 0
             }
         }
     }
