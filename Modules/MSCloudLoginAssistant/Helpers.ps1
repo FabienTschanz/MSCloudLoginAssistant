@@ -169,6 +169,66 @@ function Remove-MSCloudLoginProxyModule
 
 <#
 .SYNOPSIS
+    Finds a certificate by thumbprint in the My store of a store location.
+
+.DESCRIPTION
+    Reads the store through X509Store instead of the Cert: drive. An object returned by the
+    Cert: drive carries PowerShell properties that reference the session state of the calling
+    runspace, and the Microsoft Graph SDK keeps the certificate in a static client.
+
+.PARAMETER StoreLocation
+    The store location to search.
+
+.PARAMETER CertificateThumbprint
+    The thumbprint of the certificate.
+
+.OUTPUTS
+    System.Security.Cryptography.X509Certificates.X509Certificate2. The certificate, or $null when it is not found.
+#>
+function Find-MSCloudLoginStoreCertificate
+{
+    [CmdletBinding()]
+    [OutputType([System.Security.Cryptography.X509Certificates.X509Certificate2])]
+    param
+    (
+        [Parameter(Mandatory = $true)]
+        [System.Security.Cryptography.X509Certificates.StoreLocation]
+        $StoreLocation,
+
+        [Parameter(Mandatory = $true)]
+        [System.String]
+        $CertificateThumbprint
+    )
+
+    $store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+        [System.Security.Cryptography.X509Certificates.StoreName]::My,
+        $StoreLocation)
+    try
+    {
+        $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]'ReadOnly, OpenExistingOnly')
+        $found = $store.Certificates.Find(
+            [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+            $CertificateThumbprint,
+            $false)
+        if ($found.Count -gt 0)
+        {
+            return $found[0]
+        }
+    }
+    catch [System.Security.Cryptography.CryptographicException]
+    {
+        return $null
+    }
+    finally
+    {
+        $store.Close()
+    }
+
+    return $null
+}
+
+<#
+.SYNOPSIS
     Resolves a certificate either by thumbprint from the certificate stores or from a PFX file.
 
 .DESCRIPTION
@@ -210,10 +270,10 @@ function Get-MSCloudLoginCertificate
 
     if ($PSCmdlet.ParameterSetName -eq 'Thumbprint')
     {
-        $certificate = Get-Item -Path "Cert:\CurrentUser\My\$CertificateThumbprint" -ErrorAction SilentlyContinue
+        $certificate = Find-MSCloudLoginStoreCertificate -StoreLocation 'CurrentUser' -CertificateThumbprint $CertificateThumbprint
         if ($null -eq $certificate)
         {
-            $certificate = Get-Item -Path "Cert:\LocalMachine\My\$CertificateThumbprint" -ErrorAction SilentlyContinue
+            $certificate = Find-MSCloudLoginStoreCertificate -StoreLocation 'LocalMachine' -CertificateThumbprint $CertificateThumbprint
         }
         if ($null -eq $certificate)
         {
@@ -542,7 +602,7 @@ function Test-MSCloudLoginConnectionReusable
         $probeResult = $null
         try
         {
-            $probeResult = & $ProbeScript
+            $probeResult = & $ProbeScript $WorkloadProfile
         }
         catch
         {
