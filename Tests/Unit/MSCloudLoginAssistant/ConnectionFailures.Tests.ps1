@@ -42,8 +42,13 @@ Describe 'Connect-MSCloudLoginExchangeOnline failure handling' {
         }
     }
 
-    It 'Should return immediately when the workload is already connected' {
-        InModuleScope 'MSCloudLoginAssistant' {
+    It 'Should return immediately when the workload is already connected with <Description>' -TestCases @(
+        @{ Description = 'all cmdlets'; CmdletsToLoad = @(); LoadedAllCmdlets = $true }
+        @{ Description = 'the requested cmdlets'; CmdletsToLoad = @('Get-Mailbox'); LoadedAllCmdlets = $false }
+    ) {
+        param ($CmdletsToLoad, $LoadedAllCmdlets)
+        InModuleScope 'MSCloudLoginAssistant' -Parameters @{ CmdletsToLoad = $CmdletsToLoad; LoadedAllCmdlets = $LoadedAllCmdlets } {
+            param ($CmdletsToLoad, $LoadedAllCmdlets)
             Mock -CommandName Get-ConnectionInformation -MockWith {
                 return @([PSCustomObject]@{
                         Name         = 'ExchangeOnline_1'
@@ -57,7 +62,9 @@ Describe 'Connect-MSCloudLoginExchangeOnline failure handling' {
 
             $Script:MSCloudLoginConnectionProfile.ExchangeOnline.ApplicationId = 'app-id'
             $Script:MSCloudLoginConnectionProfile.ExchangeOnline.CompleteConnection()
-            $Script:MSCloudLoginConnectionProfile.ExchangeOnline.LoadedAllCmdlets = $true
+            $Script:MSCloudLoginConnectionProfile.ExchangeOnline.CmdletsToLoad = $CmdletsToLoad
+            $Script:MSCloudLoginConnectionProfile.ExchangeOnline.LoadedCmdlets = @('Get-Mailbox', 'Get-OrganizationConfig')
+            $Script:MSCloudLoginConnectionProfile.ExchangeOnline.LoadedAllCmdlets = $LoadedAllCmdlets
             $Script:MSCloudLoginCurrentLoadedModule = 'EXO'
 
             Connect-MSCloudLoginExchangeOnline
@@ -94,27 +101,41 @@ Describe 'Connect-MSCloudLoginExchangeOnline failure handling' {
         }
     }
 
-    It 'Should connect again when the module of the matching session cannot be imported' {
-        InModuleScope 'MSCloudLoginAssistant' {
+    It 'Should connect again when the module of the session matching the <MatchedBy> cannot be imported' -TestCases @(
+        @{ MatchedBy = 'application'; AuthenticationType = 'ServicePrincipalWithThumbprint' }
+        @{ MatchedBy = 'user principal name'; AuthenticationType = 'Credentials' }
+    ) {
+        param ($AuthenticationType)
+        InModuleScope 'MSCloudLoginAssistant' -Parameters @{ AuthenticationType = $AuthenticationType } {
+            param ($AuthenticationType)
             Mock -CommandName Get-ConnectionInformation -MockWith {
                 return @([PSCustomObject]@{
-                        Name         = 'ExchangeOnline_1'
-                        AppId        = 'app-id'
-                        Organization = 'contoso.onmicrosoft.com'
-                        ModuleName   = 'C:\Temp\tmpEXO_deleted'
-                        IsEopSession = $false
+                        Name              = 'ExchangeOnline_1'
+                        AppId             = 'app-id'
+                        Organization      = 'contoso.onmicrosoft.com'
+                        UserPrincipalName = 'admin@contoso.onmicrosoft.com'
+                        ModuleName        = 'C:\Temp\tmpEXO_deleted'
+                        IsEopSession      = $false
                     })
             }
             Mock -CommandName Import-Module -MockWith { throw 'The member FormatsToProcess in the module manifest is not valid' } -ParameterFilter { $Name -eq 'C:\Temp\tmpEXO_deleted' }
             Mock -CommandName Connect-ExchangeOnline -MockWith { }
 
             $workloadProfile = $Script:MSCloudLoginConnectionProfile.ExchangeOnline
-            $workloadProfile.AuthenticationType = 'ServicePrincipalWithThumbprint'
-            $workloadProfile.ApplicationId = 'app-id'
-            $workloadProfile.TenantId = 'contoso.onmicrosoft.com'
-            $workloadProfile.CertificateThumbprint = 'thumbprint'
+            $workloadProfile.AuthenticationType = $AuthenticationType
+            if ($AuthenticationType -eq 'Credentials')
+            {
+                $workloadProfile.Credentials = New-Object PSCredential ('admin@contoso.onmicrosoft.com', (ConvertTo-SecureString 'p@ssw0rd' -AsPlainText -Force))
+            }
+            else
+            {
+                $workloadProfile.ApplicationId = 'app-id'
+                $workloadProfile.TenantId = 'contoso.onmicrosoft.com'
+                $workloadProfile.CertificateThumbprint = 'thumbprint'
+            }
 
             { Connect-MSCloudLoginExchangeOnline } | Should -Not -Throw
+            Should -Invoke Add-MSCloudLoginAssistantEvent -ParameterFilter { $Message -like 'Could not import the module of the active session:*FormatsToProcess*' }
 
             $workloadProfile.Connected | Should -BeTrue
             Should -Invoke Connect-ExchangeOnline -Exactly 1
